@@ -1,25 +1,23 @@
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, beforeAll, beforeEach, describe, expect, it, test, vi} from "vitest";
 import * as data from "../mocks/data";
 import {mockLogger} from "../mocks/logger";
 import {events as mockMQTTEvents, mockMQTTPublishAsync, mockMQTTSubscribeAsync, mockMQTTUnsubscribeAsync} from "../mocks/mqtt";
 import * as mockSleep from "../mocks/sleep";
 import {flushPromises, getZhcBaseDefinitions} from "../mocks/utils";
+import type {Device as ZhDevice} from "../mocks/zigbeeHerdsman";
 import {devices, groups, events as mockZHEvents} from "../mocks/zigbeeHerdsman";
 
+import assert from "node:assert";
+import stringify from "json-stable-stringify-without-jsonify";
 import type {MockInstance} from "vitest";
+import * as zhc from "zigbee-herdsman-converters";
+import type {KeyValueAny} from "zigbee-herdsman-converters/lib/types";
+import {Controller} from "../../lib/controller";
+import HomeAssistant from "../../lib/extension/homeassistant";
 
 import type Device from "../../lib/model/device";
 import type Group from "../../lib/model/group";
-import type {Device as ZhDevice} from "../mocks/zigbeeHerdsman";
-
-import assert from "node:assert";
-
-import stringify from "json-stable-stringify-without-jsonify";
-
-import * as zhc from "zigbee-herdsman-converters";
-import type {KeyValueAny} from "zigbee-herdsman-converters/lib/types";
-
-import {Controller} from "../../lib/controller";
-import HomeAssistant from "../../lib/extension/homeassistant";
 import * as settings from "../../lib/util/settings";
 
 const mocksClear = [mockMQTTPublishAsync, mockLogger.debug, mockLogger.warning, mockLogger.error];
@@ -58,7 +56,6 @@ describe("Extension: HomeAssistant", () => {
     };
 
     const getZ2MEntity = (zhDeviceOrGroup: string | number | ZhDevice): Device | Group => {
-        // @ts-expect-error private
         return controller.zigbee.resolveEntity(zhDeviceOrGroup)!;
     };
 
@@ -101,7 +98,7 @@ describe("Extension: HomeAssistant", () => {
 
         for (const baseDefinition of await getZhcBaseDefinitions()) {
             const d = zhc.prepareDefinition(baseDefinition);
-            const exposes = typeof d.exposes === "function" ? d.exposes(undefined, undefined) : d.exposes;
+            const exposes = typeof d.exposes === "function" ? d.exposes({isDummyDevice: true}, {}) : d.exposes;
             const device = {
                 definition: d,
                 isDevice: (): boolean => true,
@@ -921,7 +918,7 @@ describe("Extension: HomeAssistant", () => {
         });
     });
 
-    it("Should discover devices with speed-controlled fan", async () => {
+    it("Should discover devices with speed-controlled fan", () => {
         const payload = {
             state_topic: "zigbee2mqtt/fanbee",
             state_value_template: "{{ value_json.state }}",
@@ -1182,9 +1179,9 @@ describe("Extension: HomeAssistant", () => {
             command_topic: "zigbee2mqtt/0xa4c138018cf95021/left/set",
             device: {
                 identifiers: ["zigbee2mqtt_0xa4c138018cf95021"],
-                manufacturer: "Lonsonho",
-                model: "Dual curtain/blind module",
-                model_id: "TS130F_dual",
+                manufacturer: "Girier",
+                model: "Dual smart curtain switch",
+                model_id: "TS130F_GIRIER_DUAL",
                 name: "0xa4c138018cf95021",
                 via_device: "zigbee2mqtt_bridge_0x00124b00120144ae",
             },
@@ -1212,9 +1209,9 @@ describe("Extension: HomeAssistant", () => {
             command_topic: "zigbee2mqtt/0xa4c138018cf95021/right/set",
             device: {
                 identifiers: ["zigbee2mqtt_0xa4c138018cf95021"],
-                manufacturer: "Lonsonho",
-                model: "Dual curtain/blind module",
-                model_id: "TS130F_dual",
+                manufacturer: "Girier",
+                model: "Dual smart curtain switch",
+                model_id: "TS130F_GIRIER_DUAL",
                 name: "0xa4c138018cf95021",
                 via_device: "zigbee2mqtt_bridge_0x00124b00120144ae",
             },
@@ -1232,6 +1229,8 @@ describe("Extension: HomeAssistant", () => {
             unique_id: "0xa4c138018cf95021_cover_right_zigbee2mqtt",
             value_template: '{% if "moving" in value_json and value_json.moving %} {{ value_json.moving }} {% else %} STOP {% endif %}',
         };
+
+        console.log(mockMQTTPublishAsync.mock.calls.find((c) => c[0] === "homeassistant/cover/0xa4c138018cf95021/cover_left/config"));
 
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("homeassistant/cover/0xa4c138018cf95021/cover_left/config", stringify(payload_left), {
             retain: true,
@@ -1467,7 +1466,6 @@ describe("Extension: HomeAssistant", () => {
         assert("ieeeAddr" in device);
         resetDiscoveryPayloads(device.ieeeAddr);
         mockMQTTPublishAsync.mockClear();
-        // @ts-expect-error private
         controller.eventBus.emitEntityOptionsChanged({entity: device, from: {}, to: {test: 123}});
         await flushPromises();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(`homeassistant/light/${device.ID}/light/config`, expect.any(String), expect.any(Object));
@@ -1564,7 +1562,8 @@ describe("Extension: HomeAssistant", () => {
         await flushPromises();
         await vi.runOnlyPendingTimersAsync();
         await flushPromises();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(0);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/health", expect.any(String), expect.any(Object));
     });
 
     it("Shouldnt send all status when home assistant comes online with different topic", async () => {
@@ -1577,7 +1576,8 @@ describe("Extension: HomeAssistant", () => {
         await flushPromises();
         await vi.runOnlyPendingTimersAsync();
         await flushPromises();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(0);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/health", expect.any(String), expect.any(Object));
     });
 
     it("Should discover devices with availability", async () => {
@@ -1936,7 +1936,7 @@ describe("Extension: HomeAssistant", () => {
         await mockZHEvents.message(payload1);
         await flushPromises();
 
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/button/action", "single", {retain: false, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/button/action", "single", expect.any(Object));
         expect(mockMQTTPublishAsync.mock.calls.filter((c) => c[1] === "single")).toHaveLength(1);
     });
 
@@ -2017,15 +2017,12 @@ describe("Extension: HomeAssistant", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/U202DST600ZB/l2",
             stringify({state: "ON", brightness: 20, effect: null, power_on_behavior: null}),
-            {qos: 0, retain: false},
+            {},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/U202DST600ZB/l1",
             stringify({state: null, effect: null, power_on_behavior: null}),
-            {
-                qos: 0,
-                retain: false,
-            },
+            {},
         );
     });
 
@@ -2388,7 +2385,6 @@ describe("Extension: HomeAssistant", () => {
         resetDiscoveryPayloads(device.ieeeAddr);
 
         mockMQTTPublishAsync.mockClear();
-        // @ts-expect-error private
         controller.eventBus.emitScenesChanged({entity: device});
         await flushPromises();
 
@@ -2425,7 +2421,6 @@ describe("Extension: HomeAssistant", () => {
         resetDiscoveryPayloads("9");
 
         mockMQTTPublishAsync.mockClear();
-        // @ts-expect-error private
         controller.eventBus.emitScenesChanged({entity: group});
         await flushPromises();
 
@@ -2459,7 +2454,8 @@ describe("Extension: HomeAssistant", () => {
             stringify(payload),
             {retain: true, qos: 1},
         );
-        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(6);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(7);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/health", expect.any(String), expect.any(Object));
     });
 
     it("Should not clear bridge entities unnecessarily", async () => {
@@ -2486,7 +2482,6 @@ describe("Extension: HomeAssistant", () => {
             availability_mode: "all",
         };
 
-        // @ts-expect-error private
         controller.eventBus.emitMQTTMessage({
             topic: topic,
             message: stringify(payload),

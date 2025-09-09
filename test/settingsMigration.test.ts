@@ -1,10 +1,9 @@
-// side-effect ensures using mock paths
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it} from "vitest";
 import * as data from "./mocks/data";
 
 import {existsSync, readFileSync, rmSync} from "node:fs";
-
 import objectAssignDeep from "object-assign-deep";
-
 import mockedData from "../lib/util/data";
 import * as settings from "../lib/util/settings";
 import * as settingsMigration from "../lib/util/settingsMigration";

@@ -1,7 +1,7 @@
-import type * as zigbeeHerdsmanConverter from "zigbee-herdsman-converters";
-import type {Base} from "zigbee-herdsman-converters/lib/exposes";
 import type * as zigbeeHerdsman from "zigbee-herdsman/dist";
 import type {ClusterDefinition, ClusterName, CustomClusters} from "zigbee-herdsman/dist/zspec/zcl/definition/tstype";
+import type * as zigbeeHerdsmanConverter from "zigbee-herdsman-converters";
+import type {Base} from "zigbee-herdsman-converters/lib/exposes";
 
 export type * as ZSpec from "zigbee-herdsman/dist/zspec";
 export type * as Zcl from "zigbee-herdsman/dist/zspec/zcl";
@@ -69,6 +69,8 @@ export interface Zigbee2MQTTGroupOptions {
 
 export interface Zigbee2MQTTSettings {
     version?: number;
+    /** only used internally during startup, removed on successful Z2M start */
+    onboarding?: true;
     homeassistant: {
         enabled: boolean;
         discovery_topic: string;
@@ -140,6 +142,7 @@ export interface Zigbee2MQTTSettings {
     };
     frontend: {
         enabled: boolean;
+        package: "zigbee2mqtt-frontend" | "zigbee2mqtt-windfront";
         auth_token?: string;
         host?: string;
         port: number;
@@ -148,6 +151,7 @@ export interface Zigbee2MQTTSettings {
         ssl_cert?: string;
         ssl_key?: string;
         notification_filter?: string[];
+        disable_ui_serving?: boolean;
     };
     devices: {[s: string]: Zigbee2MQTTDeviceOptions};
     groups: {[s: string]: Omit<Zigbee2MQTTGroupOptions, "ID">};
@@ -180,6 +184,11 @@ export interface Zigbee2MQTTSettings {
         output: "json" | "attribute" | "attribute_and_json";
         transmit_power?: number;
     };
+    health: {
+        /** in minutes */
+        interval: number;
+        reset_on_check: boolean;
+    };
 }
 
 export interface Zigbee2MQTTScene {
@@ -188,6 +197,7 @@ export interface Zigbee2MQTTScene {
 }
 
 export interface Zigbee2MQTTDeviceEndpoint {
+    name?: string;
     bindings: Zigbee2MQTTDeviceEndpointBinding[];
     configured_reportings: Zigbee2MQTTDeviceEndpointConfiguredReporting[];
     clusters: {input: string[]; output: string[]};
@@ -210,6 +220,7 @@ export interface Zigbee2MQTTDeviceEndpointConfiguredReporting {
 }
 
 export interface Zigbee2MQTTDeviceDefinition {
+    source: "native" | "generated" | "external";
     model: string;
     vendor: string;
     description: string;
@@ -226,8 +237,8 @@ export interface Zigbee2MQTTDevice {
     supported: boolean;
     friendly_name: string;
     disabled: boolean;
-    description: string | undefined;
-    definition: Zigbee2MQTTDeviceDefinition | undefined;
+    description?: string;
+    definition?: Zigbee2MQTTDeviceDefinition;
     power_source: zigbeeHerdsman.Models.Device["powerSource"];
     software_build_id: zigbeeHerdsman.Models.Device["softwareBuildID"];
     date_code: zigbeeHerdsman.Models.Device["dateCode"];
@@ -247,7 +258,7 @@ export interface Zigbee2MQTTGroupMember {
 export interface Zigbee2MQTTGroup {
     id: number;
     friendly_name: "default_bind_group" | string;
-    description: string | undefined;
+    description?: string;
     scenes: Zigbee2MQTTScene[];
     members: Zigbee2MQTTGroupMember[];
 }
@@ -258,10 +269,10 @@ export interface Zigbee2MQTTNetworkMap {
         friendlyName: string;
         type: string;
         networkAddress: number;
-        manufacturerName: string | undefined;
-        modelID: string | undefined;
-        failed: string[];
-        lastSeen: number | undefined;
+        manufacturerName?: string;
+        modelID?: string;
+        failed?: string[];
+        lastSeen?: number;
         definition?: {model: string; vendor: string; supports: string; description: string};
     }[];
     links: {
@@ -327,6 +338,16 @@ export interface Zigbee2MQTTAPI {
           };
 
     "bridge/info": {
+        os: {
+            version: string;
+            node_version: string;
+            cpus: string;
+            memory_mb: number;
+        };
+        mqtt: {
+            version: number | undefined;
+            server: string;
+        };
         version: string;
         commit: string | undefined;
         zigbee_herdsman_converters: {version: string};
@@ -350,6 +371,36 @@ export interface Zigbee2MQTTAPI {
         restart_required: boolean;
         config: Zigbee2MQTTSettings;
         config_schema: typeof schemaJson;
+    };
+
+    "bridge/health": {
+        /** time of message, msec from epoch, UTC */
+        response_time: number;
+        os: {
+            load_average: number[];
+            memory_used_mb: number;
+            memory_percent: number;
+        };
+        process: {
+            uptime_sec: number;
+            memory_used_mb: number;
+            memory_percent: number;
+        };
+        mqtt: {
+            connected: boolean;
+            queued: number;
+            received: number;
+            published: number;
+        };
+        devices: Record<
+            string /* ieee */,
+            {
+                messages: number;
+                messages_per_sec: number;
+                leave_count: number;
+                network_address_changes: number;
+            }
+        >;
     };
 
     "bridge/devices": Zigbee2MQTTDevice[];
@@ -474,7 +525,7 @@ export interface Zigbee2MQTTAPI {
     "bridge/request/device/bind": {
         from: string;
         from_endpoint: string | number | "default";
-        to: string;
+        to: string | number;
         to_endpoint?: string | number;
         clusters?: string[];
         skip_disable_reporting?: boolean;
@@ -483,7 +534,7 @@ export interface Zigbee2MQTTAPI {
     "bridge/response/device/bind": {
         from: string;
         from_endpoint: string | number;
-        to: string;
+        to: string | number;
         to_endpoint: string | number | undefined;
         clusters: string[];
         failed: string[];
@@ -492,7 +543,7 @@ export interface Zigbee2MQTTAPI {
     "bridge/request/device/unbind": {
         from: string;
         from_endpoint: string | number | "default";
-        to: string;
+        to: string | number;
         to_endpoint?: string | number;
         clusters?: string[];
         skip_disable_reporting?: boolean;
@@ -501,7 +552,7 @@ export interface Zigbee2MQTTAPI {
     "bridge/response/device/unbind": {
         from: string;
         from_endpoint: string | number;
-        to: string;
+        to: string | number;
         to_endpoint: string | number | undefined;
         clusters: string[];
         failed: string[];
@@ -855,7 +906,15 @@ export type Zigbee2MQTTRequestEndpoints =
     | "bridge/request/group/members/remove_all"
     | "bridge/request/touchlink/factory_reset"
     | "bridge/request/touchlink/scan"
-    | "bridge/request/touchlink/identify";
+    | "bridge/request/touchlink/identify"
+    | "{friendlyNameOrId}/set"
+    | "{friendlyNameOrId}/set/{attribute}"
+    | "{friendlyNameOrId}/{endpoint}/set"
+    | "{friendlyNameOrId}/{endpoint}/set/{attribute}"
+    | "{friendlyNameOrId}/get"
+    | "{friendlyNameOrId}/get/{attribute}"
+    | "{friendlyNameOrId}/{endpoint}/get"
+    | "{friendlyNameOrId}/{endpoint}/get/{attribute}";
 
 export type Zigbee2MQTTResponseEndpoints =
     | "bridge/response/permit_join"

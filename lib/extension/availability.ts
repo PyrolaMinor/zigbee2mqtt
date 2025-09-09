@@ -1,11 +1,8 @@
-import type * as zhc from "zigbee-herdsman-converters";
-
-import type {Zigbee2MQTTAPI} from "../types/api";
-
 import assert from "node:assert";
-
 import bind from "bind-decorator";
 import debounce from "debounce";
+import type * as zhc from "zigbee-herdsman-converters";
+import type {Zigbee2MQTTAPI} from "../types/api";
 
 import logger from "../util/logger";
 import * as settings from "../util/settings";
@@ -76,7 +73,7 @@ export default class Availability extends Extension {
         if (entity.isDevice()) {
             const lastSeen = entity.zh.lastSeen ?? /* v8 ignore next */ 0;
 
-            return Date.now() - lastSeen < this.getTimeout(entity) + this.getMaxJitter(entity);
+            return Date.now() - lastSeen < this.getTimeout(entity);
         }
 
         for (const memberDevice of entity.membersDevices()) {
@@ -206,11 +203,11 @@ export default class Availability extends Extension {
 
         this.eventBus.onEntityRenamed(this, async (data) => {
             if (utils.isAvailabilityEnabledForEntity(data.entity, settings.get())) {
-                await this.mqtt.publish(`${data.from}/availability`, "", {retain: true, qos: 1});
+                await this.mqtt.publish(`${data.from}/availability`, "", {clientOptions: {retain: true, qos: 1}});
                 await this.publishAvailability(data.entity, false, true);
             }
         });
-        this.eventBus.onEntityRemoved(this, (data) => data.type === "device" && this.clearTimer(data.id));
+        this.eventBus.onEntityRemoved(this, (data) => data.entity.isDevice() && this.clearTimer(data.entity.ID));
         this.eventBus.onDeviceLeave(this, (data) => this.clearTimer(data.ieeeAddr));
         this.eventBus.onDeviceAnnounce(this, (data) => this.retrieveState(data.device));
         this.eventBus.onLastSeenChanged(this, this.onLastSeenChanged);
@@ -265,7 +262,7 @@ export default class Availability extends Extension {
         const topic = `${entity.name}/availability`;
         const payload: Zigbee2MQTTAPI["{friendlyName}/availability"] = {state: available ? "online" : "offline"};
         this.lastPublishedAvailabilities.set(entity.ID, available);
-        await this.mqtt.publish(topic, JSON.stringify(payload), {retain: true, qos: 1});
+        await this.mqtt.publish(topic, JSON.stringify(payload), {clientOptions: {retain: true, qos: 1}});
 
         if (!skipGroups && entity.isDevice()) {
             for (const group of this.zigbee.groupsIterator()) {

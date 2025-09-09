@@ -1,10 +1,8 @@
-import type {CustomClusters} from "zigbee-herdsman/dist/zspec/zcl/definition/tstype";
-
 import assert from "node:assert";
-
-import * as zhc from "zigbee-herdsman-converters";
-import {Numeric, access} from "zigbee-herdsman-converters";
 import {InterviewState} from "zigbee-herdsman/dist/controller/model/device";
+import type {CustomClusters} from "zigbee-herdsman/dist/zspec/zcl/definition/tstype";
+import * as zhc from "zigbee-herdsman-converters";
+import {access, Numeric} from "zigbee-herdsman-converters";
 
 import * as settings from "../util/settings";
 
@@ -78,43 +76,33 @@ export default class Device {
     }
 
     endpoint(key?: string | number): zh.Endpoint | undefined {
-        let endpoint: zh.Endpoint | undefined;
-
         if (!key) {
             key = "default";
+        } else if (!Number.isNaN(Number(key))) {
+            return this.zh.getEndpoint(Number(key));
         }
 
-        if (!Number.isNaN(Number(key))) {
-            endpoint = this.zh.getEndpoint(Number(key));
-        } else if (this.definition?.endpoint) {
-            const ID = this.definition?.endpoint?.(this.zh)[key];
+        if (this.definition?.endpoint) {
+            const ID = this.definition.endpoint(this.zh)[key];
 
             if (ID) {
-                endpoint = this.zh.getEndpoint(ID);
-            } else if (key === "default") {
-                endpoint = this.zh.endpoints[0];
-            } else {
-                return undefined;
+                return this.zh.getEndpoint(ID);
             }
-        } else {
-            if (key !== "default") {
-                return undefined;
-            }
-
-            endpoint = this.zh.endpoints[0];
         }
 
-        return endpoint;
+        return key === "default" ? this.zh.endpoints[0] : undefined;
     }
 
     endpointName(endpoint: zh.Endpoint): string | undefined {
-        let epName = undefined;
+        let epName: string | undefined;
 
         if (this.definition?.endpoint) {
-            const mapping = this.definition?.endpoint(this.zh);
-            for (const [name, id] of Object.entries(mapping)) {
-                if (id === endpoint.ID) {
+            const mapping = this.definition.endpoint(this.zh);
+
+            for (const name in mapping) {
+                if (mapping[name] === endpoint.ID) {
                     epName = name;
+                    break;
                 }
             }
         }
@@ -126,9 +114,11 @@ export default class Device {
     getEndpointNames(): string[] {
         const names: string[] = [];
 
-        for (const name in this.definition?.endpoint?.(this.zh) ?? {}) {
-            if (name !== "default") {
-                names.push(name);
+        if (this.definition?.endpoint) {
+            for (const name in this.definition.endpoint(this.zh)) {
+                if (name !== "default") {
+                    names.push(name);
+                }
             }
         }
 

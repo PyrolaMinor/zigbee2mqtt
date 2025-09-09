@@ -1,17 +1,12 @@
-import type {Ota} from "zigbee-herdsman-converters";
-
-import type {Zigbee2MQTTAPI} from "../types/api";
-
 import assert from "node:assert";
 import path from "node:path";
-
 import bind from "bind-decorator";
 import stringify from "json-stable-stringify-without-jsonify";
-
 import {Zcl} from "zigbee-herdsman";
+import type {Ota} from "zigbee-herdsman-converters";
 import {ota} from "zigbee-herdsman-converters";
-
 import Device from "../model/device";
+import type {Zigbee2MQTTAPI} from "../types/api";
 import dataDir from "../util/data";
 import logger from "../util/logger";
 import * as settings from "../util/settings";
@@ -30,12 +25,11 @@ export interface UpdatePayload {
     };
 }
 
-const topicRegex = new RegExp(
-    `^${settings.get().mqtt.base_topic}/bridge/request/device/ota_update/(update|check|schedule|unschedule)/?(downgrade)?`,
-    "i",
-);
-
 export default class OTAUpdate extends Extension {
+    #topicRegex = new RegExp(
+        `^${settings.get().mqtt.base_topic}/bridge/request/device/ota_update/(update|check|schedule|unschedule)/?(downgrade)?`,
+        "i",
+    );
     private inProgress = new Set<string>();
     private lastChecked = new Map<string, number>();
     private scheduledUpgrades = new Set<string>();
@@ -257,7 +251,7 @@ export default class OTAUpdate extends Extension {
     }
 
     @bind async onMQTTMessage(data: eventdata.MQTTMessage): Promise<void> {
-        const topicMatch = data.topic.match(topicRegex);
+        const topicMatch = data.topic.match(this.#topicRegex);
 
         if (!topicMatch) {
             return;

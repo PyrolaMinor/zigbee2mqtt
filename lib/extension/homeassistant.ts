@@ -1,9 +1,7 @@
-import type * as zhc from "zigbee-herdsman-converters";
-
 import assert from "node:assert";
-
 import bind from "bind-decorator";
 import stringify from "json-stable-stringify-without-jsonify";
+import type * as zhc from "zigbee-herdsman-converters";
 
 import logger from "../util/logger";
 import * as settings from "../util/settings";
@@ -83,7 +81,7 @@ const BINARY_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     noise_detected: {device_class: "sound"},
     occupancy: {device_class: "occupancy"},
     power_outage_memory: {entity_category: "config", icon: "mdi:memory"},
-    presence: {device_class: "presence"},
+    presence: {device_class: "occupancy"},
     setup: {device_class: "running"},
     smoke: {device_class: "smoke"},
     sos: {device_class: "safety"},
@@ -156,6 +154,8 @@ const NUMERIC_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     eco_temperature: {entity_category: "config", icon: "mdi:thermometer"},
     energy: {device_class: "energy", state_class: "total_increasing"},
     external_temperature_input: {device_class: "temperature", icon: "mdi:thermometer"},
+    external_temperature: {device_class: "temperature", icon: "mdi:thermometer"},
+    external_humidity: {device_class: "humidity", icon: "mdi:water-percent"},
     formaldehyd: {state_class: "measurement"},
     flow: {device_class: "volume_flow_rate", state_class: "measurement"},
     gas_density: {icon: "mdi:google-circles-communities", state_class: "measurement"},
@@ -236,9 +236,12 @@ const NUMERIC_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
         device_class: "water",
         state_class: "total_increasing",
     },
-    x_axis: {icon: "mdi:axis-x-arrow"},
-    y_axis: {icon: "mdi:axis-y-arrow"},
-    z_axis: {icon: "mdi:axis-z-arrow"},
+    x: {icon: "mdi:axis-x-arrow", state_class: "measurement"},
+    x_axis: {icon: "mdi:axis-x-arrow", state_class: "measurement"},
+    y: {icon: "mdi:axis-y-arrow", state_class: "measurement"},
+    y_axis: {icon: "mdi:axis-y-arrow", state_class: "measurement"},
+    z: {icon: "mdi:axis-z-arrow", state_class: "measurement"},
+    z_axis: {icon: "mdi:axis-z-arrow", state_class: "measurement"},
 } as const;
 const ENUM_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     action: {icon: "mdi:gesture-double-tap"},
@@ -1218,13 +1221,13 @@ export class HomeAssistant extends Extension {
 
     @bind async onEntityRemoved(data: eventdata.EntityRemoved): Promise<void> {
         logger.debug(`Clearing Home Assistant discovery for '${data.name}'`);
-        const discovered = this.getDiscovered(data.id);
+        const discovered = this.getDiscovered(data.entity.ID);
 
         for (const topic of Object.keys(discovered.messages)) {
-            await this.mqtt.publish(topic, "", {retain: true, qos: 1}, this.discoveryTopic, false, false);
+            await this.mqtt.publish(topic, "", {clientOptions: {retain: true, qos: 1}, baseTopic: this.discoveryTopic, skipReceive: false});
         }
 
-        delete this.discovered[data.id];
+        delete this.discovered[data.entity.ID];
     }
 
     @bind async onGroupMembersChanged(data: eventdata.GroupMembersChanged): Promise<void> {
@@ -1305,7 +1308,7 @@ export class HomeAssistant extends Extension {
         if (data.homeAssisantRename) {
             const discovered = this.getDiscovered(data.entity);
             for (const topic of Object.keys(discovered.messages)) {
-                await this.mqtt.publish(topic, "", {retain: true, qos: 1}, this.discoveryTopic, false, false);
+                await this.mqtt.publish(topic, "", {clientOptions: {retain: true, qos: 1}, baseTopic: this.discoveryTopic, skipReceive: false});
             }
             discovered.messages = {};
 
@@ -1685,7 +1688,11 @@ export class HomeAssistant extends Extension {
             if (!discoveredMessage || discoveredMessage.payload !== payloadStr || !discoveredMessage.published) {
                 discovered.messages[topic] = {payload: payloadStr, published: publish};
                 if (publish) {
-                    await this.mqtt.publish(topic, payloadStr, {retain: true, qos: 1}, this.discoveryTopic, false, false);
+                    await this.mqtt.publish(topic, payloadStr, {
+                        clientOptions: {retain: true, qos: 1},
+                        baseTopic: this.discoveryTopic,
+                        skipReceive: false,
+                    });
                 }
             } else {
                 logger.debug(`Skipping discovery of '${topic}', already discovered`);
@@ -1701,7 +1708,7 @@ export class HomeAssistant extends Extension {
         for (const topic of lastDiscoveredTopics) {
             const isDeviceAutomation = topic.match(this.discoveryRegexWoTopic)?.[1] === "device_automation";
             if (!newDiscoveredTopics.has(topic) && !isDeviceAutomation) {
-                await this.mqtt.publish(topic, "", {retain: true, qos: 1}, this.discoveryTopic, false, false);
+                await this.mqtt.publish(topic, "", {clientOptions: {retain: true, qos: 1}, baseTopic: this.discoveryTopic, skipReceive: false});
             }
         }
     }
@@ -1751,7 +1758,7 @@ export class HomeAssistant extends Extension {
 
             if (clear) {
                 logger.debug(`Clearing outdated Home Assistant config '${data.topic}'`);
-                await this.mqtt.publish(topic, "", {retain: true, qos: 1}, this.discoveryTopic, false, false);
+                await this.mqtt.publish(topic, "", {clientOptions: {retain: true, qos: 1}, baseTopic: this.discoveryTopic, skipReceive: false});
             } else if (entity) {
                 this.getDiscovered(entity).messages[topic] = {payload: stringify(message), published: true};
             }
@@ -1784,7 +1791,7 @@ export class HomeAssistant extends Extension {
 
         for (const topic of Object.keys(discovered.messages)) {
             if (topic.startsWith("scene")) {
-                await this.mqtt.publish(topic, "", {retain: true, qos: 1}, this.discoveryTopic, false, false);
+                await this.mqtt.publish(topic, "", {clientOptions: {retain: true, qos: 1}, baseTopic: this.discoveryTopic, skipReceive: false});
                 delete discovered.messages[topic];
             }
         }
@@ -1917,7 +1924,11 @@ export class HomeAssistant extends Extension {
             origin: this.discoveryOrigin,
         };
 
-        await this.mqtt.publish(topic, stringify(payload), {retain: true, qos: 1}, this.discoveryTopic, false, false);
+        await this.mqtt.publish(topic, stringify(payload), {
+            clientOptions: {retain: true, qos: 1},
+            baseTopic: this.discoveryTopic,
+            skipReceive: false,
+        });
         discovered.triggers.add(discoveredKey);
     }
 

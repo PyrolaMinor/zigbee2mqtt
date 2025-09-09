@@ -8,8 +8,8 @@ interface EventBusMap {
     adapterDisconnected: [];
     permitJoinChanged: [data: eventdata.PermitJoinChanged];
     publishAvailability: [];
-    deviceRenamed: [data: eventdata.EntityRenamed];
-    deviceRemoved: [data: eventdata.EntityRemoved];
+    entityRenamed: [data: eventdata.EntityRenamed];
+    entityRemoved: [data: eventdata.EntityRemoved];
     lastSeenChanged: [data: eventdata.LastSeenChanged];
     deviceNetworkAddressChanged: [data: eventdata.DeviceNetworkAddressChanged];
     deviceAnnounce: [data: eventdata.DeviceAnnounce];
@@ -34,9 +34,25 @@ type EventBusListener<K> = K extends keyof EventBusMap
         : never
     : never;
 
+type Stats = {
+    devices: Map<
+        string, // IEEE address
+        {
+            lastSeenChanges?: {messages: number; first: number};
+            leaveCounts: number;
+            networkAddressChanges: number;
+        }
+    >;
+    mqtt: {
+        published: number;
+        received: number;
+    };
+};
+
 export default class EventBus {
     private callbacksByExtension = new Map<string, {event: keyof EventBusMap; callback: EventBusListener<keyof EventBusMap>}[]>();
     private emitter = new events.EventEmitter<EventBusMap>();
+    readonly stats: Stats = {devices: new Map(), mqtt: {published: 0, received: 0}};
 
     constructor() {
         this.emitter.setMaxListeners(100);
@@ -57,21 +73,33 @@ export default class EventBus {
     }
 
     public emitEntityRenamed(data: eventdata.EntityRenamed): void {
-        this.emitter.emit("deviceRenamed", data);
+        this.emitter.emit("entityRenamed", data);
     }
     public onEntityRenamed(key: ListenerKey, callback: (data: eventdata.EntityRenamed) => void): void {
-        this.on("deviceRenamed", callback, key);
+        this.on("entityRenamed", callback, key);
     }
 
     public emitEntityRemoved(data: eventdata.EntityRemoved): void {
-        this.emitter.emit("deviceRemoved", data);
+        this.emitter.emit("entityRemoved", data);
     }
     public onEntityRemoved(key: ListenerKey, callback: (data: eventdata.EntityRemoved) => void): void {
-        this.on("deviceRemoved", callback, key);
+        this.on("entityRemoved", callback, key);
     }
 
     public emitLastSeenChanged(data: eventdata.LastSeenChanged): void {
         this.emitter.emit("lastSeenChanged", data);
+
+        const device = this.stats.devices.get(data.device.ieeeAddr);
+
+        if (device?.lastSeenChanges) {
+            device.lastSeenChanges.messages += 1;
+        } else {
+            this.stats.devices.set(data.device.ieeeAddr, {
+                lastSeenChanges: {messages: 1, first: Date.now()},
+                leaveCounts: 0,
+                networkAddressChanges: 0,
+            });
+        }
     }
     public onLastSeenChanged(key: ListenerKey, callback: (data: eventdata.LastSeenChanged) => void): void {
         this.on("lastSeenChanged", callback, key);
@@ -79,6 +107,14 @@ export default class EventBus {
 
     public emitDeviceNetworkAddressChanged(data: eventdata.DeviceNetworkAddressChanged): void {
         this.emitter.emit("deviceNetworkAddressChanged", data);
+
+        const device = this.stats.devices.get(data.device.ieeeAddr);
+
+        if (device) {
+            device.networkAddressChanges += 1;
+        } else {
+            this.stats.devices.set(data.device.ieeeAddr, {leaveCounts: 0, networkAddressChanges: 1});
+        }
     }
     public onDeviceNetworkAddressChanged(key: ListenerKey, callback: (data: eventdata.DeviceNetworkAddressChanged) => void): void {
         this.on("deviceNetworkAddressChanged", callback, key);
@@ -121,6 +157,14 @@ export default class EventBus {
 
     public emitDeviceLeave(data: eventdata.DeviceLeave): void {
         this.emitter.emit("deviceLeave", data);
+
+        const device = this.stats.devices.get(data.ieeeAddr);
+
+        if (device) {
+            device.leaveCounts += 1;
+        } else {
+            this.stats.devices.set(data.ieeeAddr, {leaveCounts: 1, networkAddressChanges: 0});
+        }
     }
     public onDeviceLeave(key: ListenerKey, callback: (data: eventdata.DeviceLeave) => void): void {
         this.on("deviceLeave", callback, key);
@@ -135,6 +179,8 @@ export default class EventBus {
 
     public emitMQTTMessage(data: eventdata.MQTTMessage): void {
         this.emitter.emit("mqttMessage", data);
+
+        this.stats.mqtt.received += 1;
     }
     public onMQTTMessage(key: ListenerKey, callback: (data: eventdata.MQTTMessage) => void): void {
         this.on("mqttMessage", callback, key);
@@ -142,6 +188,8 @@ export default class EventBus {
 
     public emitMQTTMessagePublished(data: eventdata.MQTTMessagePublished): void {
         this.emitter.emit("mqttMessagePublished", data);
+
+        this.stats.mqtt.published += 1;
     }
     public onMQTTMessagePublished(key: ListenerKey, callback: (data: eventdata.MQTTMessagePublished) => void): void {
         this.on("mqttMessagePublished", callback, key);

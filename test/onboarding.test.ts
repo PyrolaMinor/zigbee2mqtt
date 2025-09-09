@@ -1,11 +1,11 @@
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi} from "vitest";
 import * as data from "./mocks/data";
 
+import {rmSync, writeFileSync} from "node:fs";
+import {join} from "node:path";
 import type {IncomingMessage, OutgoingHttpHeader, OutgoingHttpHeaders, RequestListener, Server, ServerResponse} from "node:http";
-
-import {rmSync} from "node:fs";
-
 import type {findAllDevices} from "zigbee-herdsman/dist/adapter/adapterDiscovery";
-
 import {onboard} from "../lib/util/onboarding";
 import * as settings from "../lib/util/settings";
 
@@ -67,6 +67,7 @@ const SETTINGS_MINIMAL_DEFAULTS = {
     homeassistant: {
         enabled: settings.defaults.homeassistant!.enabled,
     },
+    onboarding: true,
 };
 
 const SAMPLE_SETTINGS_INIT = {
@@ -123,6 +124,7 @@ const SAMPLE_SETTINGS_SAVE = {
     homeassistant: {
         enabled: true,
     },
+    onboarding: true,
 };
 
 const SAMPLE_SETTINGS_SAVE_PARAMS = {
@@ -186,10 +188,10 @@ describe("Onboarding", () => {
         expectWriteMinimal: boolean,
         expectFailure: boolean,
     ): Promise<[getHtml: string, postHtml: string]> => {
-        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+        // biome-ignore lint/suspicious/noExplicitAny: ignore
         const reqDataListener = vi.fn<(chunk: any) => void>();
         const reqEndListener = vi.fn<() => void>();
-        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+        // biome-ignore lint/suspicious/noExplicitAny: ignore
         const resEnd = vi.fn<(chunk: any | (() => void), cb?: () => void) => ServerResponse<IncomingMessage>>(
             // @ts-expect-error return not used
             (chunk, cb) => {
@@ -297,7 +299,7 @@ describe("Onboarding", () => {
     };
 
     const runFailure = async (): Promise<string> => {
-        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+        // biome-ignore lint/suspicious/noExplicitAny: ignore
         const resEnd = vi.fn<(chunk: any | (() => void), cb?: () => void) => ServerResponse<IncomingMessage>>(
             // @ts-expect-error return not used
             (chunk, cb) => {
@@ -441,10 +443,34 @@ describe("Onboarding", () => {
         expect(postHtml).toContain("You can close this page");
     });
 
-    it("rerun onboard via ENV and sets given settings", async () => {
+    it("reruns onboard via ENV and sets given settings", async () => {
         // data.removeConfiguration();
 
         process.env.Z2M_ONBOARD_FORCE_RUN = "1";
+
+        let p;
+        const [getHtml, postHtml] = await new Promise<[string, string]>((resolve, reject) => {
+            mockHttpOnListen.mockImplementationOnce(async () => {
+                try {
+                    resolve(await runOnboarding(SAMPLE_SETTINGS_SAVE_PARAMS, false, false));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+
+            p = onboard();
+        });
+
+        await expect(p).resolves.toStrictEqual(true);
+        expect(data.read()).toStrictEqual(SAMPLE_SETTINGS_SAVE);
+        expect(getHtml).toContain("No device found");
+        expect(getHtml).toContain("generate_network");
+        expect(postHtml).toContain('<a href="http://localhost:8080/">');
+    });
+
+    it("reruns onboard on failed start", async () => {
+        // data.removeConfiguration();
+        settings.setOnboarding(true);
 
         let p;
         const [getHtml, postHtml] = await new Promise<[string, string]>((resolve, reject) => {
@@ -579,7 +605,7 @@ describe("Onboarding", () => {
         });
 
         await expect(p).resolves.toStrictEqual(false);
-        expect(data.read()).toStrictEqual(SAMPLE_SETTINGS_INIT);
+        expect(data.read()).toStrictEqual(Object.assign({}, SAMPLE_SETTINGS_INIT, {onboarding: true}));
         expect(getHtml).toContain("No device found");
         expect(postHtml).toContain("adapter must be equal to one of the allowed values");
     });
@@ -622,11 +648,14 @@ describe("Onboarding", () => {
         const p = onboard();
 
         await expect(p).resolves.toStrictEqual(true);
-        expect(data.read()).toStrictEqual(
-            Object.assign({}, SETTINGS_MINIMAL_DEFAULTS, {
-                mqtt: {server: process.env.ZIGBEE2MQTT_CONFIG_MQTT_SERVER, base_topic: SETTINGS_MINIMAL_DEFAULTS.mqtt.base_topic},
-            }),
-        );
+
+        const expected = Object.assign({}, SETTINGS_MINIMAL_DEFAULTS, {
+            mqtt: {server: process.env.ZIGBEE2MQTT_CONFIG_MQTT_SERVER, base_topic: SETTINGS_MINIMAL_DEFAULTS.mqtt.base_topic},
+        });
+        // @ts-expect-error mock
+        delete expected.onboarding;
+
+        expect(data.read()).toStrictEqual(expected);
     });
 
     it("handles configuring onboarding with config ENV overrides", async () => {
@@ -724,7 +753,13 @@ describe("Onboarding", () => {
     });
 
     it("handles validation failure", async () => {
-        settings.set(["serial", "adapter"], "emberz");
+        const reReadSpy = vi.spyOn(settings, "reRead");
+
+        // set after onboarding server is done to reach bottom code path
+        reReadSpy.mockImplementationOnce(() => {
+            settings.set(["serial", "adapter"], "emberz");
+            settings.reRead();
+        });
 
         let p;
         const getHtml = await new Promise<string>((resolve, reject) => {
@@ -741,6 +776,88 @@ describe("Onboarding", () => {
 
         await expect(p).resolves.toStrictEqual(false);
         expect(getHtml).toContain("adapter must be equal to one of the allowed values");
+
+        reReadSpy.mockRestore();
+    });
+
+    it("handles non-required validation failure before applying envs", async () => {
+        settings.set(["serial"], "/dev/ttyUSB0");
+
+        let p;
+        const getHtml = await new Promise<string>((resolve, reject) => {
+            mockHttpOnListen.mockImplementationOnce(async () => {
+                try {
+                    resolve(await runFailure());
+                } catch (error) {
+                    reject(error);
+                }
+            });
+
+            p = onboard();
+        });
+
+        await expect(p).resolves.toStrictEqual(false);
+        expect(getHtml).toContain("serial must be object");
+    });
+
+    it("handles invalid yaml file", async () => {
+        settings.testing.clear();
+
+        const configFile = join(data.mockDir, "configuration.yaml");
+
+        writeFileSync(
+            configFile,
+            `
+                good: 9
+                \t wrong
+        `,
+        );
+
+        let p;
+        const getHtml = await new Promise<string>((resolve, reject) => {
+            mockHttpOnListen.mockImplementationOnce(async () => {
+                try {
+                    resolve(await runFailure());
+                } catch (error) {
+                    reject(error);
+                }
+            });
+
+            p = onboard();
+        });
+
+        await expect(p).resolves.toStrictEqual(false);
+        expect(getHtml).toContain("Your configuration file");
+        expect(getHtml).toContain("is invalid");
+
+        data.removeConfiguration();
+    });
+
+    it("handles error while loading yaml file", async () => {
+        settings.testing.clear();
+
+        const configFile = join(data.mockDir, "configuration.yaml");
+
+        writeFileSync(configFile, "badfile");
+
+        let p;
+        const getHtml = await new Promise<string>((resolve, reject) => {
+            mockHttpOnListen.mockImplementationOnce(async () => {
+                try {
+                    resolve(await runFailure());
+                } catch (error) {
+                    reject(error);
+                }
+            });
+
+            p = onboard();
+        });
+
+        await expect(p).resolves.toStrictEqual(false);
+        expect(getHtml).toContain("AssertionError");
+        expect(getHtml).toContain("expected to be an object");
+
+        data.removeConfiguration();
     });
 
     it("handles creating data path", async () => {

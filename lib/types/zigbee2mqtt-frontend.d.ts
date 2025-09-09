@@ -1,5 +1,9 @@
 declare module "zigbee2mqtt-frontend" {
-    export function getPath(): string;
+    const frontend: {
+        getPath: () => string;
+    };
+
+    export default frontend;
 }
 
 declare module "http" {
@@ -7,11 +11,4 @@ declare module "http" {
         originalUrl?: string;
         path?: string;
     }
-}
-
-declare module "express-static-gzip" {
-    import type {IncomingMessage, ServerResponse} from "node:http";
-
-    export type RequestHandler = (req: IncomingMessage, res: ServerResponse, finalhandler: (err: unknown) => void) => void;
-    export default function expressStaticGzip(root: string, options?: Record<string, unknown>): RequestHandler;
 }

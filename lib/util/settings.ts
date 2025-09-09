@@ -1,6 +1,5 @@
-import type {ValidateFunction} from "ajv";
-
 import path from "node:path";
+import type {ValidateFunction} from "ajv";
 
 import Ajv from "ajv";
 import objectAssignDeep from "object-assign-deep";
@@ -8,7 +7,7 @@ import objectAssignDeep from "object-assign-deep";
 import data from "./data";
 import schemaJson from "./settings.schema.json";
 import utils from "./utils";
-import yaml, {YAMLFileException} from "./yaml";
+import yaml from "./yaml";
 
 export {schemaJson};
 // When updating also update:
@@ -43,6 +42,7 @@ export const defaults = {
     },
     frontend: {
         enabled: false,
+        package: "zigbee2mqtt-frontend",
         port: 8080,
         base_url: "/",
     },
@@ -52,6 +52,9 @@ export const defaults = {
         force_disable_retain: false,
         // 1MB = roughly 3.5KB per device * 300 devices for `/bridge/devices`
         maximum_packet_size: 1048576,
+        keepalive: 60,
+        reject_unauthorized: true,
+        version: 4,
     },
     serial: {
         disable_led: false,
@@ -111,6 +114,10 @@ export const defaults = {
         network_key: [1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 13],
         timestamp_format: "YYYY-MM-DD HH:mm:ss",
         output: "json",
+    },
+    health: {
+        interval: 10,
+        reset_on_check: false,
     },
 } satisfies RecursivePartial<Settings>;
 
@@ -179,6 +186,22 @@ export function writeMinimalDefaults(): void {
     loadSettingsWithDefaults();
 }
 
+export function setOnboarding(value: boolean): void {
+    const settings = getPersistedSettings();
+
+    if (value) {
+        if (!settings.onboarding) {
+            settings.onboarding = value;
+
+            write();
+        }
+    } else if (settings.onboarding) {
+        delete settings.onboarding;
+
+        write();
+    }
+}
+
 export function write(): void {
     const settings = getPersistedSettings();
     const toWrite: KeyValue = objectAssignDeep({}, settings);
@@ -237,15 +260,7 @@ export function write(): void {
 }
 
 export function validate(): string[] {
-    try {
-        getPersistedSettings();
-    } catch (error) {
-        if (error instanceof YAMLFileException) {
-            return [`Your YAML file: '${error.file}' is invalid (use https://jsonformatter.org/yaml-validator to find and fix the issue)`];
-        }
-
-        return [`${error}`];
-    }
+    getPersistedSettings();
 
     if (!ajvSetting(_settings)) {
         // biome-ignore lint/style/noNonNullAssertion: When `ajvSetting()` return false it always has `errors`
@@ -275,9 +290,6 @@ export function validate(): string[] {
         if ("icon" in e && e.icon && !e.icon.startsWith("http://") && !e.icon.startsWith("https://") && !e.icon.startsWith("device_icons/")) {
             errors.push(`Device icon of '${e.friendly_name}' should start with 'device_icons/', got '${e.icon}'`);
         }
-        if (e.qos != null && ![0, 1, 2].includes(e.qos)) {
-            errors.push(`QOS for '${e.friendly_name}' not valid, should be 0, 1 or 2 got ${e.qos}`);
-        }
     };
 
     const settingsWithDefaults = get();
@@ -299,6 +311,19 @@ export function validate(): string[] {
     }
 
     return errors;
+}
+
+export function validateNonRequired(): string[] {
+    getPersistedSettings();
+
+    if (!ajvSetting(_settings)) {
+        // biome-ignore lint/style/noNonNullAssertion: When `ajvSetting()` return false it always has `errors`
+        const errors = ajvSetting.errors!.filter((e) => e.keyword !== "required");
+
+        return errors.map((v) => `${v.instancePath.substring(1)} ${v.message}`);
+    }
+
+    return [];
 }
 
 function read(): Partial<Settings> {
@@ -458,12 +483,12 @@ export function apply(settings: Record<string, unknown>, throwOnError = true): b
     const newSettings = objectAssignDeep.noMutate(_settings, settings);
 
     utils.removeNullPropertiesFromObject(newSettings, NULLABLE_SETTINGS);
-    ajvSetting(newSettings);
 
-    if (throwOnError) {
-        const errors = ajvSetting.errors?.filter((e) => e.keyword !== "required");
+    if (!ajvSetting(newSettings) && throwOnError) {
+        // biome-ignore lint/style/noNonNullAssertion: When `ajvSetting()` return false it always has `errors`
+        const errors = ajvSetting.errors!.filter((e) => e.keyword !== "required");
 
-        if (errors?.length) {
+        if (errors.length) {
             const error = errors[0];
             throw new Error(`${error.instancePath.substring(1)} ${error.message}`);
         }
@@ -579,7 +604,7 @@ export function addGroup(name: string, id?: string): GroupOptions {
         settings.groups = {};
     }
 
-    if (id == null) {
+    if (id == null || (typeof id === "string" && id.trim() === "")) {
         // look for free ID
         id = "1";
 

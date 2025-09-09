@@ -1,7 +1,6 @@
-import type {Zigbee2MQTTAPI, Zigbee2MQTTNetworkMap} from "../types/api";
-
 import bind from "bind-decorator";
 import stringify from "json-stable-stringify-without-jsonify";
+import type {Zigbee2MQTTAPI, Zigbee2MQTTNetworkMap} from "../types/api";
 
 import logger from "../util/logger";
 import * as settings from "../util/settings";
@@ -14,7 +13,7 @@ const SUPPORTED_FORMATS = ["raw", "graphviz", "plantuml"];
  * This extension creates a network map
  */
 export default class NetworkMap extends Extension {
-    private topic = `${settings.get().mqtt.base_topic}/bridge/request/networkmap`;
+    #topic = `${settings.get().mqtt.base_topic}/bridge/request/networkmap`;
 
     // biome-ignore lint/suspicious/useAwait: API
     override async start(): Promise<void> {
@@ -22,7 +21,7 @@ export default class NetworkMap extends Extension {
     }
 
     @bind async onMQTTMessage(data: eventdata.MQTTMessage): Promise<void> {
-        if (data.topic === this.topic) {
+        if (data.topic === this.#topic) {
             const message = utils.parseJSON(data.message, data.message) as Zigbee2MQTTAPI["bridge/request/networkmap"];
 
             try {
@@ -268,8 +267,7 @@ export default class NetworkMap extends Extension {
                 networkAddress: device.zh.networkAddress,
                 manufacturerName: device.zh.manufacturerName,
                 modelID: device.zh.modelID,
-                // biome-ignore lint/style/noNonNullAssertion: TODO: biome migration: wrong typing? will be undefined if type=EndDevice?
-                failed: failed.get(device)!,
+                failed: failed.get(device),
                 lastSeen: device.zh.lastSeen,
                 definition,
             });

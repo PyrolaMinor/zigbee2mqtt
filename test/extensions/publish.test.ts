@@ -1,3 +1,5 @@
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from "vitest";
 import * as data from "../mocks/data";
 import {mockLogger} from "../mocks/logger";
 import {events as mockMQTTEvents, mockMQTTPublishAsync} from "../mocks/mqtt";
@@ -6,9 +8,7 @@ import {flushPromises} from "../mocks/utils";
 import {devices, groups, events as mockZHEvents} from "../mocks/zigbeeHerdsman";
 
 import stringify from "json-stable-stringify-without-jsonify";
-
 import {clearGlobalStore} from "zigbee-herdsman-converters";
-
 import {Controller} from "../../lib/controller";
 import {loadTopicGetSetRegex} from "../../lib/extension/publish";
 import * as settings from "../../lib/util/settings";
@@ -42,7 +42,6 @@ describe("Extension: Publish", () => {
 
     beforeEach(() => {
         data.writeDefaultConfiguration();
-        // @ts-expect-error private
         controller.state.clear();
         settings.reRead();
         loadTopicGetSetRegex();
@@ -240,7 +239,7 @@ describe("Extension: Publish", () => {
         expect(endpoint.command).toHaveBeenCalledWith(
             "manuSpecificTuya",
             "dataRequest",
-            {dpValues: [{data: [1], datatype: 1, dp: 2}], seq: expect.any(Number)},
+            {dpValues: [{data: Buffer.from([1]), datatype: 1, dp: 2}], seq: expect.any(Number)},
             {disableDefaultResponse: true},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/TS0601_switch", stringify({state_l2: "ON"}), {retain: false, qos: 0});
@@ -257,19 +256,19 @@ describe("Extension: Publish", () => {
         expect(endpoint.command).toHaveBeenCalledWith(
             "manuSpecificTuya",
             "dataRequest",
-            {dpValues: [{data: [0], datatype: 4, dp: 1}], seq: expect.any(Number)},
+            {dpValues: [{data: Buffer.from([0]), datatype: 4, dp: 1}], seq: expect.any(Number)},
             {disableDefaultResponse: true},
         );
         expect(endpoint.command).toHaveBeenCalledWith(
             "manuSpecificTuya",
             "dataRequest",
-            {dpValues: [{data: [1], datatype: 1, dp: 102}], seq: expect.any(Number)},
+            {dpValues: [{data: Buffer.from([1]), datatype: 1, dp: 102}], seq: expect.any(Number)},
             {disableDefaultResponse: true},
         );
         expect(endpoint.command).toHaveBeenCalledWith(
             "manuSpecificTuya",
             "dataRequest",
-            {dpValues: [{data: [0], datatype: 1, dp: 101}], seq: expect.any(Number)},
+            {dpValues: [{data: Buffer.from([0]), datatype: 1, dp: 101}], seq: expect.any(Number)},
             {disableDefaultResponse: true},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
@@ -426,7 +425,7 @@ describe("Extension: Publish", () => {
         expect(group.command).toHaveBeenCalledWith(
             "manuSpecificTuya",
             "dataRequest",
-            {dpValues: [{data: [1], datatype: 1, dp: 7}], seq: expect.any(Number)},
+            {dpValues: [{data: Buffer.from([1]), datatype: 1, dp: 7}], seq: expect.any(Number)},
             {disableDefaultResponse: true},
         );
     });
@@ -967,20 +966,18 @@ describe("Extension: Publish", () => {
         const payload = {state: "ON", brightness: 20, color_temp: 200, transition: 20};
         await mockMQTTEvents.message("zigbee2mqtt/bulb/set", stringify(payload));
         await flushPromises();
-        expect(endpoint.command).toHaveBeenCalledTimes(3);
+        expect(endpoint.command).toHaveBeenCalledTimes(2);
         expect(endpoint.command.mock.calls[0]).toEqual(["genLevelCtrl", "moveToLevelWithOnOff", {level: 20, transtime: 0}, {}]);
-        expect(endpoint.command.mock.calls[1]).toEqual(["genLevelCtrl", "stop", {}, {}]); // unfreeze
-        expect(endpoint.command.mock.calls[2]).toEqual(["lightingColorCtrl", "moveToColorTemp", {colortemp: 200, transtime: 200}, {}]);
+        expect(endpoint.command.mock.calls[1]).toEqual(["lightingColorCtrl", "moveToColorTemp", {colortemp: 200, transtime: 200}, {}]);
     });
 
     it("Should use transition only once when setting brightness and color temperature for group which contains TRADFRI", async () => {
         const group = groups.group_with_tradfri;
         await mockMQTTEvents.message("zigbee2mqtt/group_with_tradfri/set", stringify({state: "ON", transition: 60, brightness: 20, color_temp: 400}));
         await flushPromises();
-        expect(group.command).toHaveBeenCalledTimes(3);
+        expect(group.command).toHaveBeenCalledTimes(2);
         expect(group.command.mock.calls[0]).toEqual(["genLevelCtrl", "moveToLevelWithOnOff", {level: 20, transtime: 0}, {}]);
-        expect(group.command.mock.calls[1]).toEqual(["genLevelCtrl", "stop", {}, {}]); // unfreeze
-        expect(group.command.mock.calls[2]).toEqual(["lightingColorCtrl", "moveToColorTemp", {colortemp: 400, transtime: 600}, {}]);
+        expect(group.command.mock.calls[1]).toEqual(["lightingColorCtrl", "moveToColorTemp", {colortemp: 400, transtime: 600}, {}]);
     });
 
     it("Message transition should overrule options transition", async () => {
@@ -1077,7 +1074,7 @@ describe("Extension: Publish", () => {
         expect(endpoint.command.mock.calls[0]).toEqual([
             "lightingColorCtrl",
             "enhancedMoveToHueAndSaturation",
-            {direction: 0, enhancehue: 45510, saturation: 127, transtime: 0},
+            {enhancehue: 45510, saturation: 127, transtime: 0},
             {},
         ]);
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
@@ -1259,11 +1256,8 @@ describe("Extension: Publish", () => {
 
     it("Home Assistant: should not set state when color temperature is also set and device is already on", async () => {
         settings.set(["homeassistant"], {enabled: true});
-        // @ts-expect-error private
         const device = controller.zigbee.resolveEntity(devices.bulb_color.ieeeAddr)!;
-        // @ts-expect-error private
         controller.state.remove(devices.bulb_color.ieeeAddr);
-        // @ts-expect-error private
         controller.state.set(device, {state: "ON"});
         const endpoint = device.zh.getEndpoint(1)!;
         const payload = {state: "ON", color_temp: 100};
@@ -1278,11 +1272,8 @@ describe("Extension: Publish", () => {
 
     it("Home Assistant: should set state when color temperature is also set and device is off", async () => {
         settings.set(["homeassistant"], {enabled: true});
-        // @ts-expect-error private
         const device = controller.zigbee.resolveEntity(devices.bulb_color.ieeeAddr)!;
-        // @ts-expect-error private
         controller.state.remove(devices.bulb_color.ieeeAddr);
-        // @ts-expect-error private
         controller.state.set(device, {state: "OFF"});
         const endpoint = device.zh.getEndpoint(1)!;
         const payload = {state: "ON", color_temp: 100};
@@ -1301,11 +1292,8 @@ describe("Extension: Publish", () => {
 
     it("Home Assistant: should not set state when color is also set", async () => {
         settings.set(["homeassistant"], {enabled: true});
-        // @ts-expect-error private
         const device = controller.zigbee.resolveEntity(devices.bulb_color.ieeeAddr)!;
-        // @ts-expect-error private
         controller.state.remove(devices.bulb_color.ieeeAddr);
-        // @ts-expect-error private
         controller.state.set(device, {state: "ON"});
         const endpoint = device.zh.getEndpoint(1)!;
         const payload = {state: "ON", color: {x: 0.41, y: 0.25}};
@@ -1454,7 +1442,7 @@ describe("Extension: Publish", () => {
         await mockMQTTEvents.message("zigbee2mqtt/roller_shutter/set", stringify({state: "OPEN"}));
         await flushPromises();
         expect(endpoint.command).toHaveBeenCalledTimes(1);
-        expect(endpoint.command).toHaveBeenCalledWith("genLevelCtrl", "moveToLevelWithOnOff", {level: "255", transtime: 0}, {});
+        expect(endpoint.command).toHaveBeenCalledWith("genLevelCtrl", "moveToLevelWithOnOff", {level: 255, transtime: 0}, {});
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
         expect(mockMQTTPublishAsync.mock.calls[0][0]).toStrictEqual("zigbee2mqtt/roller_shutter");
         expect(JSON.parse(mockMQTTPublishAsync.mock.calls[0][1])).toStrictEqual({position: 100});
@@ -1470,7 +1458,7 @@ describe("Extension: Publish", () => {
         expect(endpoint.command).toHaveBeenCalledWith(
             "manuSpecificTuya",
             "dataRequest",
-            {dpValues: [{data: [1], datatype: 1, dp: 3}], seq: expect.any(Number)},
+            {dpValues: [{data: Buffer.from([1]), datatype: 1, dp: 3}], seq: expect.any(Number)},
             {disableDefaultResponse: true},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
@@ -1601,8 +1589,8 @@ describe("Extension: Publish", () => {
         await flushPromises();
         expect(group.command).toHaveBeenCalledTimes(1);
         expect(group.command).toHaveBeenCalledWith("genScenes", "store", {groupid: 15071, sceneid: 1}, {});
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/groups", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/groups", expect.any(String), {retain: true});
 
         await mockMQTTEvents.message("zigbee2mqtt/bulb_color_2/set", stringify({state: "ON", brightness: 250, color_temp: 20}));
         await mockMQTTEvents.message("zigbee2mqtt/bulb_2/set", stringify({state: "ON", brightness: 110}));

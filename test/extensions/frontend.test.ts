@@ -1,15 +1,15 @@
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi} from "vitest";
 import * as data from "../mocks/data";
 import {mockLogger} from "../mocks/logger";
-import {mockMQTTPublishAsync} from "../mocks/mqtt";
+import {events as mockMQTTEvents, mockMQTTPublishAsync} from "../mocks/mqtt";
 import {type EventHandler, flushPromises} from "../mocks/utils";
-import {devices} from "../mocks/zigbeeHerdsman";
+import {devices, events as mockZHEvents} from "../mocks/zigbeeHerdsman";
 
 import path from "node:path";
-
 import stringify from "json-stable-stringify-without-jsonify";
 import type {Mock} from "vitest";
 import ws from "ws";
-
 import {Controller} from "../../lib/controller";
 import * as settings from "../../lib/util/settings";
 
@@ -23,7 +23,6 @@ const mockHTTP = {
     close: vi.fn<(cb: (err?: Error) => void) => void>((cb) => cb()),
 };
 
-let mockHTTPSOnRequest: (request: {url: string}, response: number) => void;
 const mockHTTPSEvents: Record<string, EventHandler> = {};
 const mockHTTPS = {
     listen: vi.fn(),
@@ -56,7 +55,7 @@ const mockWS = {
     handleUpgrade: vi.fn().mockImplementation((_request, _socket, _head, cb) => {
         cb(mockWSocket);
     }),
-    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+    // biome-ignore lint/suspicious/noExplicitAny: ignore
     emit: vi.fn<(eventName: string, ...args: any[]) => void>(),
     close: vi.fn<(code?: number, data?: string | Buffer) => void>(),
 };
@@ -76,10 +75,7 @@ vi.mock("node:http", () => ({
 }));
 
 vi.mock("node:https", () => ({
-    createServer: vi.fn().mockImplementation((onRequest) => {
-        mockHTTPSOnRequest = onRequest;
-        return mockHTTPS;
-    }),
+    createServer: vi.fn().mockImplementation(() => mockHTTPS),
     Agent: vi.fn(),
 }));
 
@@ -230,6 +226,7 @@ describe("Extension: Frontend", () => {
         mockWSClient.readyState = "open";
         mockWS.clients.push(mockWSClient);
         await mockWSEvents.connection(mockWSClient);
+        devices.bulb_color.linkquality = 20;
 
         const allTopics = mockWSClient.send.mock.calls.map(([m]) => JSON.parse(m).topic);
         expect(allTopics).toContain("bridge/devices");
@@ -249,7 +246,7 @@ describe("Extension: Frontend", () => {
                 state: "ON",
                 effect: null,
                 power_on_behavior: null,
-                linkquality: null,
+                linkquality: 20,
                 update: {state: null, installed_version: -1, latest_version: -1},
             }),
             {retain: false, qos: 0},
@@ -270,9 +267,36 @@ describe("Extension: Frontend", () => {
                 topic: "bulb_color",
                 payload: {
                     state: "ON",
-                    effect: null,
                     power_on_behavior: null,
-                    linkquality: null,
+                    effect: null,
+                    linkquality: 20,
+                    update: {state: null, installed_version: -1, latest_version: -1},
+                },
+            }),
+        );
+
+        // Should publish bridge messages
+        await mockZHEvents.deviceJoined({device: devices.bulb});
+        await flushPromises();
+        expect(mockWSClient.send).toHaveBeenCalledWith(
+            stringify({payload: {data: {friendly_name: "bulb", ieee_address: "0x000b57fffec6a5b2"}, type: "device_joined"}, topic: "bridge/event"}),
+        );
+
+        // Should send JSON state event when `output: attribute`
+        mockWSClient.send.mockClear();
+        settings.set(["advanced", "output"], "attribute");
+        await mockMQTTEvents.message("zigbee2mqtt/bulb_color/set", stringify({brightness: 90}));
+        await flushPromises();
+        expect(mockWSClient.send).toHaveBeenCalledTimes(1);
+        expect(mockWSClient.send).toHaveBeenCalledWith(
+            stringify({
+                topic: "bulb_color",
+                payload: {
+                    state: "ON",
+                    brightness: 90,
+                    power_on_behavior: null,
+                    effect: null,
+                    linkquality: 20,
                     update: {state: null, installed_version: -1, latest_version: -1},
                 },
             }),
@@ -338,7 +362,7 @@ describe("Extension: Frontend", () => {
         expect(mockHTTP.listen).toHaveBeenCalledWith(8081, "127.0.0.1");
     });
 
-    it("Authentification", async () => {
+    it("Authentication", async () => {
         const authToken = "sample-secure-token";
         settings.set(["frontend", "auth_token"], authToken);
         controller = new Controller(vi.fn(), vi.fn());
@@ -462,5 +486,18 @@ describe("Extension: Frontend", () => {
         await controller.enableDisableExtension(false, "Frontend");
 
         await vi.waitFor(() => controller.getExtension("Frontend") === undefined);
+    });
+
+    it("disables serving", async () => {
+        settings.set(["frontend", "disable_ui_serving"], true);
+        controller = new Controller(vi.fn(), vi.fn());
+        await controller.start();
+
+        expect(mockHTTP.listen).toHaveBeenCalledTimes(0);
+        mockWS.clients.push(mockWSClient);
+        await controller.stop();
+        expect(mockWSClient.terminate).toHaveBeenCalledTimes(1);
+        expect(mockHTTP.close).toHaveBeenCalledTimes(0);
+        expect(mockWS.close).toHaveBeenCalledTimes(1);
     });
 });

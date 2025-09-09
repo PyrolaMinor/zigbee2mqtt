@@ -1,8 +1,8 @@
 // side-effect ensures using mock paths
+import {beforeEach, describe, expect, it} from "vitest";
 import "./mocks/data";
 
 import fs from "node:fs";
-
 import yaml from "js-yaml";
 import objectAssignDeep from "object-assign-deep";
 
@@ -165,6 +165,43 @@ describe("Settings", () => {
         writeAndCheck();
     });
 
+    it("Should apply Home Assistant environment variables", () => {
+        // should be kept in sync with envs in https://github.com/zigbee2mqtt/hassio-zigbee2mqtt/blob/master/common/rootfs/docker-entrypoint.sh
+        process.env.ZIGBEE2MQTT_CONFIG_FRONTEND_ENABLED = "true";
+        process.env.ZIGBEE2MQTT_CONFIG_FRONTEND_PORT = "8099";
+        process.env.ZIGBEE2MQTT_CONFIG_HOMEASSISTANT_ENABLED = "true";
+        process.env.ZIGBEE2MQTT_CONFIG_SERIAL_PORT =
+            "/dev/serial/by-id/usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_48be7a7468d8ed11bfea786ff2c613ac-if00-port0";
+        process.env.ZIGBEE2MQTT_CONFIG_MQTT_SERVER = "mqtt://core-mosquitto:1883";
+        process.env.ZIGBEE2MQTT_CONFIG_MQTT_USER = "addons";
+        process.env.ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD = "7RbR4NBSskS8TKG4ugzdRilXw6TPQ4NKFs259j2DxeultOFtl5JwciNZFd6feT5o";
+
+        write(configurationFile, {});
+
+        // @ts-expect-error workaround
+        const expected = objectAssignDeep.noMutate({}, settings.testing.defaults);
+        expected.frontend.enabled = true;
+        expected.frontend.port = 8099;
+        expected.homeassistant.enabled = true;
+        expected.serial.port = "/dev/serial/by-id/usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_48be7a7468d8ed11bfea786ff2c613ac-if00-port0";
+        expected.mqtt.server = "mqtt://core-mosquitto:1883";
+        expected.mqtt.user = "addons";
+        expected.mqtt.password = "7RbR4NBSskS8TKG4ugzdRilXw6TPQ4NKFs259j2DxeultOFtl5JwciNZFd6feT5o";
+        expected.devices = {};
+        expected.groups = {};
+
+        const writeAndCheck = (): void => {
+            expect(settings.write()); // trigger writing of ENVs
+            expect(settings.validate()).toStrictEqual([]);
+            expect(settings.get()).toStrictEqual(expected);
+        };
+
+        // Write trice to ensure there are no side effects.
+        writeAndCheck();
+        writeAndCheck();
+        writeAndCheck();
+    });
+
     it("Should write environment variables as overrides to configuration.yaml, not in the ref file", () => {
         write(secretFile, {password: "password-in-secret-file"}, false);
         write(configurationFile, {mqtt: {password: "!secret password", server: "server"}});
@@ -275,6 +312,9 @@ describe("Settings", () => {
             base_topic: "zigbee2mqtt",
             include_device_information: false,
             maximum_packet_size: 1048576,
+            keepalive: 60,
+            reject_unauthorized: true,
+            version: 4,
             force_disable_retain: false,
             password: "mysecretpassword",
             server: "my.mqtt.server",
@@ -320,6 +360,9 @@ describe("Settings", () => {
             base_topic: "zigbee2mqtt",
             include_device_information: false,
             maximum_packet_size: 1048576,
+            keepalive: 60,
+            reject_unauthorized: true,
+            version: 4,
             force_disable_retain: false,
             password: "mysecretpassword",
             server: "my.mqtt.server",
@@ -506,7 +549,7 @@ describe("Settings", () => {
     it("Should read groups", () => {
         const content = {
             groups: {
-                1: {
+                "1": {
                     friendly_name: "123",
                 },
             },
@@ -515,18 +558,17 @@ describe("Settings", () => {
         write(configurationFile, content);
 
         const group = settings.getGroup("1");
-        const expected = {
+
+        expect(group).toStrictEqual({
             ID: 1,
             friendly_name: "123",
-        };
-
-        expect(group).toStrictEqual(expected);
+        });
     });
 
     it("Throw if removing non-existing group", () => {
         const content = {
             groups: {
-                1: {
+                "1": {
                     friendly_name: "123",
                 },
             },
@@ -543,7 +585,7 @@ describe("Settings", () => {
         };
 
         const contentGroups = {
-            1: {
+            "1": {
                 friendly_name: "123",
             },
         };
@@ -552,12 +594,11 @@ describe("Settings", () => {
         write(groupsFile, contentGroups);
 
         const group = settings.getGroup("1");
-        const expected = {
+
+        expect(group).toStrictEqual({
             ID: 1,
             friendly_name: "123",
-        };
-
-        expect(group).toStrictEqual(expected);
+        });
     });
 
     it("Combine everything! groups and devices from separate file :)", () => {
@@ -567,9 +608,8 @@ describe("Settings", () => {
         };
 
         const contentGroups = {
-            1: {
+            "1": {
                 friendly_name: "123",
-                devices: [],
             },
         };
         write(configurationFile, contentConfiguration);
@@ -586,44 +626,48 @@ describe("Settings", () => {
 
         expect(read(configurationFile)).toStrictEqual(expectedConfiguration);
 
-        const expectedDevice = {
+        expect(read(devicesFile)).toStrictEqual({
             "0x1234": {
                 friendly_name: "0x1234",
             },
-        };
-
-        expect(read(devicesFile)).toStrictEqual(expectedDevice);
+        });
 
         const group = settings.getGroup("1");
-        const expectedGroup = {
+
+        expect(group).toStrictEqual({
             ID: 1,
             friendly_name: "123",
-            devices: [],
-        };
-
-        expect(group).toStrictEqual(expectedGroup);
+        });
 
         expect(read(configurationFile)).toStrictEqual(expectedConfiguration);
 
-        const expectedDevice2 = {
+        expect(settings.getDevice("0x1234")).toStrictEqual({
             ID: "0x1234",
             friendly_name: "0x1234",
-        };
-
-        expect(settings.getDevice("0x1234")).toStrictEqual(expectedDevice2);
+        });
     });
 
     it("Should add groups", () => {
         write(configurationFile, {});
 
         settings.addGroup("test123");
-        const expected = {
-            1: {
+
+        expect(settings.get().groups).toStrictEqual({
+            "1": {
                 friendly_name: "test123",
             },
-        };
+        });
 
-        expect(settings.get().groups).toStrictEqual(expected);
+        settings.addGroup("test456", "");
+
+        expect(settings.get().groups).toStrictEqual({
+            "1": {
+                friendly_name: "test123",
+            },
+            "2": {
+                friendly_name: "test456",
+            },
+        });
     });
 
     it("Should allow username without password", () => {
@@ -637,6 +681,9 @@ describe("Settings", () => {
             base_topic: "zigbee2mqtt",
             include_device_information: false,
             maximum_packet_size: 1048576,
+            keepalive: 60,
+            reject_unauthorized: true,
+            version: 4,
             force_disable_retain: false,
             server: "my.mqtt.server",
             user: "myusername",
@@ -650,7 +697,7 @@ describe("Settings", () => {
 
         settings.addGroup("test123", "123");
         const expected = {
-            123: {
+            "123": {
                 friendly_name: "test123",
             },
         };
@@ -682,7 +729,7 @@ describe("Settings", () => {
             settings.addGroup("test123");
         }).toThrow(`friendly_name 'test123' is already in use`);
         const expected = {
-            1: {
+            "1": {
                 friendly_name: "test123",
             },
         };
@@ -698,7 +745,7 @@ describe("Settings", () => {
             settings.addGroup("test_id_123", "123");
         }).toThrow(new Error("Group ID '123' is already in use"));
         const expected = {
-            123: {
+            "123": {
                 friendly_name: "test123",
             },
         };
@@ -800,25 +847,6 @@ describe("Settings", () => {
         expect(settings.get().blocklist).toStrictEqual(["0x123", "0x1234"]);
     });
 
-    it("Should throw error when yaml file is invalid", () => {
-        fs.writeFileSync(
-            configurationFile,
-            `
-             good: 9
-             \t wrong
-        `,
-        );
-
-        settings.testing.clear();
-        const error = `Your YAML file: '${configurationFile}' is invalid (use https://jsonformatter.org/yaml-validator to find and fix the issue)`;
-        expect(settings.validate()).toEqual(expect.arrayContaining([error]));
-    });
-
-    it("Should throw error when yaml file does not exist", () => {
-        settings.testing.clear();
-        expect(settings.validate()[0]).toContain("ENOENT: no such file or directory, open ");
-    });
-
     it("Configuration shouldnt be valid when invalid QOS value is used", () => {
         write(configurationFile, {
             ...minimalConfig,
@@ -827,7 +855,7 @@ describe("Settings", () => {
 
         settings.reRead();
 
-        const error = `QOS for 'myname' not valid, should be 0, 1 or 2 got 3`;
+        const error = "devices/0x0017880104e45519/qos must be equal to one of the allowed values";
         expect(settings.validate()).toEqual(expect.arrayContaining([error]));
     });
 
@@ -835,7 +863,7 @@ describe("Settings", () => {
         write(configurationFile, {
             ...minimalConfig,
             devices: {"0x0017880104e45519": {friendly_name: "myname", retain: false}},
-            groups: {1: {friendly_name: "myname", retain: false}},
+            groups: {"1": {friendly_name: "myname", retain: false}},
         });
 
         settings.reRead();
@@ -924,7 +952,7 @@ describe("Settings", () => {
         expect(settings.validate()).toEqual(expect.arrayContaining([error]));
     });
 
-    it("Configuration shouldnt be valid when duplicate friendly_name are used", async () => {
+    it("Configuration shouldnt be valid when duplicate friendly_name are used", () => {
         write(configurationFile, {
             devices: {
                 "0x0017880104e45519": {friendly_name: "myname", retain: false},
@@ -939,7 +967,7 @@ describe("Settings", () => {
         }).toThrowError(`friendly_name 'myname' is already in use`);
     });
 
-    it("Should throw when removing device which doesnt exist", async () => {
+    it("Should throw when removing device which doesnt exist", () => {
         write(configurationFile, {
             devices: {
                 "0x0017880104e45519": {friendly_name: "myname", retain: false},
@@ -1019,6 +1047,6 @@ describe("Settings", () => {
         write(configurationFile, {frontend: {enabled: true}});
 
         settings.reRead();
-        expect(settings.get().frontend).toStrictEqual({enabled: true, port: 8080, base_url: "/"});
+        expect(settings.get().frontend).toStrictEqual({enabled: true, package: "zigbee2mqtt-frontend", port: 8080, base_url: "/"});
     });
 });

@@ -1,3 +1,5 @@
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from "vitest";
 import * as data from "../mocks/data";
 import {mockJSZipFile, mockJSZipGenerateAsync} from "../mocks/jszip";
 import {mockLogger} from "../mocks/logger";
@@ -5,18 +7,16 @@ import {events as mockMQTTEvents, mockMQTTPublishAsync} from "../mocks/mqtt";
 import {flushPromises} from "../mocks/utils";
 import {CUSTOM_CLUSTERS, devices, groups, mockController as mockZHController, events as mockZHEvents, returnDevices} from "../mocks/zigbeeHerdsman";
 
-import type {Mock} from "vitest";
-
 import assert from "node:assert";
 import fs from "node:fs";
+import {platform} from "node:os";
 import path from "node:path";
-
 import stringify from "json-stable-stringify-without-jsonify";
-
+import type {Mock} from "vitest";
 import {Controller} from "../../lib/controller";
 import Bridge from "../../lib/extension/bridge";
 import * as settings from "../../lib/util/settings";
-import utils from "../../lib/util/utils";
+import utils, {DEFAULT_BIND_GROUP_ID} from "../../lib/util/utils";
 
 returnDevices.push(devices.coordinator.ieeeAddr);
 returnDevices.push(devices.bulb.ieeeAddr);
@@ -40,6 +40,19 @@ const mocksClear = [
 ];
 
 const deviceIconsDir = path.join(data.mockDir, "device_icons");
+
+vi.mock("node:os", async (importOriginal) => ({
+    ...(await importOriginal()),
+    version: vi.fn(() => "Linux"),
+    release: vi.fn(() => "0.0.1"),
+    arch: vi.fn(() => "x64"),
+    cpus: vi.fn(() => [{model: "Intel Core i7-9999"}]),
+    totalmem: vi.fn(() => 10485760),
+}));
+vi.mock("node:process", async (importOriginal) => ({
+    ...(await importOriginal()),
+    version: "v1.2.3",
+}));
 
 describe("Extension: Bridge", () => {
     let controller: Controller;
@@ -94,12 +107,16 @@ describe("Extension: Bridge", () => {
         const zhVersion = await utils.getDependencyVersion("zigbee-herdsman");
         const zhcVersion = await utils.getDependencyVersion("zigbee-herdsman-converters");
         const directory = settings.get().advanced.log_directory;
-        // console.log(mockMQTTPublishAsync.mock.calls.find((c) => c[0] === 'zigbee2mqtt/bridge/info')![1]);
+        // console.log(mockMQTTPublishAsync.mock.calls.find((c) => c[0] === "zigbee2mqtt/bridge/info")![1]);
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/info",
             stringify({
                 commit: version.commitHash,
                 config: {
+                    health: {
+                        interval: 10,
+                        reset_on_check: false,
+                    },
                     advanced: {
                         adapter_concurrent: undefined,
                         adapter_delay: undefined,
@@ -268,6 +285,7 @@ describe("Extension: Bridge", () => {
                     },
                     frontend: {
                         enabled: false,
+                        package: "zigbee2mqtt-frontend",
                         port: 8080,
                         base_url: "/",
                     },
@@ -293,6 +311,9 @@ describe("Extension: Bridge", () => {
                         force_disable_retain: false,
                         include_device_information: false,
                         maximum_packet_size: 1048576,
+                        keepalive: 60,
+                        reject_unauthorized: true,
+                        version: 4,
                         server: "mqtt://localhost",
                     },
                     ota: {
@@ -314,14 +335,24 @@ describe("Extension: Bridge", () => {
                 version: version.version,
                 zigbee_herdsman: zhVersion,
                 zigbee_herdsman_converters: zhcVersion,
+                os: {
+                    version: "Linux - 0.0.1 - x64",
+                    node_version: "v1.2.3",
+                    cpus: "Intel Core i7-9999 (x1)",
+                    memory_mb: 10,
+                },
+                mqtt: {
+                    server: "mqtt://localhost:1883",
+                    version: 5,
+                },
             }),
-            {retain: true, qos: 0},
+            {retain: true},
         );
     });
 
     it("Should publish devices on startup", async () => {
         await resetExtension();
-        // console.log(mockMQTTPublishAsync.mock.calls.find((c) => c[0] === 'zigbee2mqtt/bridge/devices')[1]);
+        // console.log(mockMQTTPublishAsync.mock.calls.find((c) => c[0] === "zigbee2mqtt/bridge/devices")[1]);
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/devices",
             stringify([
@@ -339,6 +370,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "TRADFRI bulb E26/E27, white spectrum, globe, opal, 980 lm",
                         exposes: [
                             {
@@ -596,6 +628,7 @@ describe("Extension: Bridge", () => {
                 {
                     date_code: "2019.09",
                     definition: {
+                        source: "native",
                         description: "Hue Go",
                         exposes: [
                             {
@@ -791,6 +824,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "Hue dimmer switch",
                         exposes: [
                             {
@@ -894,6 +928,7 @@ describe("Extension: Bridge", () => {
                     disabled: false,
                     endpoints: {
                         "1": {
+                            name: "ep1",
                             bindings: [
                                 {cluster: "genLevelCtrl", target: {endpoint: 1, ieee_address: "0x000b57fffec6a5b3", type: "endpoint"}},
                                 {cluster: "genOnOff", target: {endpoint: 1, ieee_address: "0x000b57fffec6a5b3", type: "endpoint"}},
@@ -905,7 +940,13 @@ describe("Extension: Bridge", () => {
                             configured_reportings: [],
                             scenes: [],
                         },
-                        "2": {bindings: [], clusters: {input: ["genBasic"], output: ["genOta", "genOnOff"]}, configured_reportings: [], scenes: []},
+                        "2": {
+                            name: "ep2",
+                            bindings: [],
+                            clusters: {input: ["genBasic"], output: ["genOta", "genOnOff"]},
+                            configured_reportings: [],
+                            scenes: [],
+                        },
                     },
                     friendly_name: "remote",
                     ieee_address: "0x0017880104e45517",
@@ -920,6 +961,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "generated",
                         description: "Automatically generated definition",
                         exposes: [
                             {
@@ -1014,6 +1056,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "Wireless mini switch",
                         exposes: [
                             {
@@ -1089,6 +1132,7 @@ describe("Extension: Bridge", () => {
                                 name: "device_temperature_calibration",
                                 property: "device_temperature_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                         ],
                         supports_ota: false,
@@ -1124,6 +1168,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "Temperature and humidity sensor",
                         exposes: [
                             {
@@ -1197,6 +1242,7 @@ describe("Extension: Bridge", () => {
                                 name: "temperature_calibration",
                                 property: "temperature_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                             {
                                 access: 2,
@@ -1216,6 +1262,7 @@ describe("Extension: Bridge", () => {
                                 name: "humidity_calibration",
                                 property: "humidity_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                             {
                                 access: 2,
@@ -1235,6 +1282,7 @@ describe("Extension: Bridge", () => {
                                 name: "pressure_calibration",
                                 property: "pressure_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                             {
                                 access: 2,
@@ -1266,6 +1314,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "Mi smart plug",
                         exposes: [
                             {
@@ -1345,6 +1394,7 @@ describe("Extension: Bridge", () => {
                                 name: "power_calibration",
                                 property: "power_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                             {
                                 access: 2,
@@ -1364,6 +1414,7 @@ describe("Extension: Bridge", () => {
                                 name: "energy_calibration",
                                 property: "energy_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                             {
                                 access: 2,
@@ -1383,6 +1434,7 @@ describe("Extension: Bridge", () => {
                                 name: "device_temperature_calibration",
                                 property: "device_temperature_calibration",
                                 type: "numeric",
+                                value_step: 0.1,
                             },
                             {
                                 access: 2,
@@ -1413,6 +1465,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "zigfred plus smart in-wall switch",
                         exposes: [
                             {
@@ -1858,42 +1911,49 @@ describe("Extension: Bridge", () => {
                     disabled: false,
                     endpoints: {
                         "10": {
+                            name: "l5",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "genOnOff", "genLevelCtrl"], output: []},
                             configured_reportings: [],
                             scenes: [],
                         },
                         "11": {
+                            name: "l6",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "closuresWindowCovering"], output: []},
                             configured_reportings: [],
                             scenes: [],
                         },
                         "12": {
+                            name: "l7",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "closuresWindowCovering"], output: []},
                             configured_reportings: [],
                             scenes: [],
                         },
                         "5": {
+                            name: "l1",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "genOnOff", "genLevelCtrl", "lightingColorCtrl"], output: []},
                             configured_reportings: [],
                             scenes: [],
                         },
                         "7": {
+                            name: "l2",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "genOnOff", "genLevelCtrl"], output: []},
                             configured_reportings: [],
                             scenes: [],
                         },
                         "8": {
+                            name: "l3",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "genOnOff", "genLevelCtrl"], output: []},
                             configured_reportings: [],
                             scenes: [],
                         },
                         "9": {
+                            name: "l4",
                             bindings: [],
                             clusters: {input: ["genBasic", "genScenes", "genOnOff", "genLevelCtrl"], output: []},
                             configured_reportings: [],
@@ -1914,6 +1974,7 @@ describe("Extension: Bridge", () => {
                 },
                 {
                     definition: {
+                        source: "native",
                         description: "TRADFRI bulb E26/E27, white spectrum, globe, opal, 980 lm",
                         exposes: [
                             {
@@ -2160,7 +2221,7 @@ describe("Extension: Bridge", () => {
                     type: "Router",
                 },
             ]),
-            {retain: true, qos: 0},
+            {retain: true},
         );
     });
 
@@ -2168,7 +2229,6 @@ describe("Extension: Bridge", () => {
         await resetExtension();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/definitions", expect.stringContaining(stringify(CUSTOM_CLUSTERS)), {
             retain: true,
-            qos: 0,
         });
     });
 
@@ -2181,7 +2241,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/logging",
             stringify({message: "this is a test", level: "info", namespace: "z2m"}),
-            {retain: false, qos: 0},
+            {},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
 
@@ -2203,7 +2263,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/logging",
             stringify({message: "this is a test", level: "info", namespace: "z2m"}),
-            {retain: false, qos: 0},
+            {},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(1);
 
@@ -2260,7 +2320,7 @@ describe("Extension: Bridge", () => {
                     scenes: [],
                 },
                 {friendly_name: "gledopto_group", id: 21, members: [{endpoint: 15, ieee_address: "0x0017880104e45724"}], scenes: []},
-                {friendly_name: "default_bind_group", id: 901, members: [], scenes: []},
+                {friendly_name: "default_bind_group", id: DEFAULT_BIND_GROUP_ID, members: [], scenes: []},
                 {
                     friendly_name: "ha_discovery_group",
                     id: 9,
@@ -2278,7 +2338,7 @@ describe("Extension: Bridge", () => {
                     scenes: [],
                 },
             ]),
-            {retain: true, qos: 0},
+            {retain: true},
         );
     });
 
@@ -2289,7 +2349,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({type: "device_joined", data: {friendly_name: "bulb", ieee_address: "0x000b57fffec6a5b2"}}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2297,7 +2357,7 @@ describe("Extension: Bridge", () => {
         mockMQTTPublishAsync.mockClear();
         await mockZHEvents.deviceNetworkAddressChanged({device: devices.bulb});
         await flushPromises();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
     });
 
     it("Should publish event when device announces", async () => {
@@ -2308,7 +2368,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({type: "device_announce", data: {friendly_name: "bulb", ieee_address: "0x000b57fffec6a5b2"}}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2320,7 +2380,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({type: "device_interview", data: {friendly_name: "bulb", status: "started", ieee_address: "0x000b57fffec6a5b2"}}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2332,9 +2392,9 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({type: "device_interview", data: {friendly_name: "bulb", status: "failed", ieee_address: "0x000b57fffec6a5b2"}}),
-            {retain: false, qos: 0},
+            {},
         );
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
     });
 
     it("Should publish event and devices when device interview successful", async () => {
@@ -2349,6 +2409,7 @@ describe("Extension: Bridge", () => {
             stringify({
                 data: {
                     definition: {
+                        source: "native",
                         description: "TRADFRI bulb E26/E27, white spectrum, globe, opal, 980 lm",
                         exposes: [
                             {
@@ -2577,13 +2638,14 @@ describe("Extension: Bridge", () => {
                 },
                 type: "device_interview",
             }),
-            {retain: false, qos: 0},
+            {},
         );
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({
                 data: {
                     definition: {
+                        source: "generated",
                         description: "Automatically generated definition",
                         exposes: [
                             {
@@ -2662,10 +2724,10 @@ describe("Extension: Bridge", () => {
                 },
                 type: "device_interview",
             }),
-            {retain: false, qos: 0},
+            {},
         );
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/definitions", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/definitions", expect.any(String), {retain: true});
     });
 
     it("Should publish event and devices when device leaves", async () => {
@@ -2676,14 +2738,14 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({type: "device_leave", data: {ieee_address: "0x000b57fffec6a5b2", friendly_name: "bulb"}}),
-            {retain: false, qos: 0},
+            {},
         );
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             // Defintitions should be updated on device event
             "zigbee2mqtt/bridge/definitions",
             expect.any(String),
-            {retain: true, qos: 0},
+            {retain: true},
         );
     });
 
@@ -2692,10 +2754,7 @@ describe("Extension: Bridge", () => {
         await flushPromises();
         expect(mockZHController.permitJoin).toHaveBeenCalledTimes(1);
         expect(mockZHController.permitJoin).toHaveBeenCalledWith(1, undefined);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/permit_join", stringify({data: {time: 1}, status: "ok"}), {
-            retain: false,
-            qos: 0,
-        });
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/permit_join", stringify({data: {time: 1}, status: "ok"}), {});
     });
 
     it("Should disallow permit join on all", async () => {
@@ -2703,10 +2762,7 @@ describe("Extension: Bridge", () => {
         await flushPromises();
         expect(mockZHController.permitJoin).toHaveBeenCalledTimes(1);
         expect(mockZHController.permitJoin).toHaveBeenCalledWith(0, undefined);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/permit_join", stringify({data: {time: 0}, status: "ok"}), {
-            retain: false,
-            qos: 0,
-        });
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/permit_join", stringify({data: {time: 0}, status: "ok"}), {});
     });
 
     it("Should allow permit join with number string (automatically on all)", async () => {
@@ -2714,10 +2770,7 @@ describe("Extension: Bridge", () => {
         await flushPromises();
         expect(mockZHController.permitJoin).toHaveBeenCalledTimes(1);
         expect(mockZHController.permitJoin).toHaveBeenCalledWith(1, undefined);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/permit_join", stringify({data: {time: 1}, status: "ok"}), {
-            retain: false,
-            qos: 0,
-        });
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/permit_join", stringify({data: {time: 1}, status: "ok"}), {});
     });
 
     it("Should not allow permit join with invalid payload", async () => {
@@ -2727,7 +2780,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/permit_join",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2735,7 +2788,7 @@ describe("Extension: Bridge", () => {
         mockMQTTPublishAsync.mockClear();
         await mockZHEvents.permitJoinChanged({permitted: false, timeout: 10});
         await flushPromises();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
     });
 
     it("Shouldnt republish bridge info when permit join changes and hersman is stopping", async () => {
@@ -2743,7 +2796,7 @@ describe("Extension: Bridge", () => {
         mockZHController.isStopping.mockImplementationOnce(() => true);
         await mockZHEvents.permitJoinChanged({permitted: false, timeout: 10});
         await flushPromises();
-        expect(mockMQTTPublishAsync).not.toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).not.toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
     });
 
     it("Should allow permit join via device", async () => {
@@ -2756,7 +2809,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/permit_join",
             stringify({data: {time: 123, device: "bulb"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2768,7 +2821,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/permit_join",
             stringify({data: {}, status: "error", error: "Device 'bulb_not_existing_woeeee' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2779,7 +2832,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/permit_join",
             stringify({data: {time: 0}, status: "ok", transaction: 22}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2793,7 +2846,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/permit_join",
             stringify({data: {}, status: "error", error: "Failed to connect to adapter"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2804,7 +2857,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2830,7 +2883,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/health_check",
             stringify({data: {healthy: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2842,7 +2895,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/coordinator_check",
             stringify({data: {missing_routers: [{friendly_name: "bulb", ieee_address: "0x000b57fffec6a5b2"}]}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2856,12 +2909,12 @@ describe("Extension: Bridge", () => {
         expect(device.removeFromNetwork).toHaveBeenCalledTimes(1);
         expect(device.removeFromDatabase).not.toHaveBeenCalled();
         expect(settings.getDevice("bulb")).toBeUndefined();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bulb", "", {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bulb", "", {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
             stringify({data: {id: "bulb", block: false, force: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
         expect(settings.get().blocklist).toStrictEqual([]);
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
@@ -2880,7 +2933,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
             stringify({data: {id: "bulb", block: false, force: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2896,7 +2949,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
             stringify({data: {id: "bulb", block: false, force: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2911,7 +2964,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
             stringify({data: {id: "bulb", block: true, force: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
         expect(settings.get().blocklist).toStrictEqual(["0x000b57fffec6a5b2"]);
     });
@@ -2927,7 +2980,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/remove",
             stringify({data: {id: "group_1", force: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2942,7 +2995,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/remove",
             stringify({data: {id: "group_1", force: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2964,7 +3017,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
             stringify({data: {}, status: "error", error: "Device 'non-existing-device' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2979,7 +3032,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
             stringify({data: {}, status: "error", error: "Failed to remove device 'bulb' (block: false, force: false) (Error: device timeout)"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -2994,13 +3047,31 @@ describe("Extension: Bridge", () => {
             retain: true,
             description: "this is my bulb",
         });
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bulb", "", {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bulb", "", {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bulb_new_name", stringify({brightness: 50}), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {from: "bulb", to: "bulb_new_name", homeassistant_rename: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
+        );
+    });
+
+    it("Should trim input when renaming device", async () => {
+        mockMQTTPublishAsync.mockClear();
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/rename", stringify({from: "bulb", to: " bulb_new_name  "}));
+        await flushPromises();
+        expect(settings.getDevice("bulb")).toBeUndefined();
+        expect(settings.getDevice("bulb_new_name")).toStrictEqual({
+            ID: "0x000b57fffec6a5b2",
+            friendly_name: "bulb_new_name",
+            retain: true,
+            description: "this is my bulb",
+        });
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/device/rename",
+            stringify({data: {from: "bulb", to: "bulb_new_name", homeassistant_rename: false}, status: "ok"}),
+            {},
         );
     });
 
@@ -3011,7 +3082,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {}, status: "error", error: "MQTT wildcard (+ and #) not allowed in friendly_name ('living_room/blinds#')"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3025,7 +3096,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/rename",
             stringify({data: {from: "group_1", to: "group_new_name", homeassistant_rename: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3036,7 +3107,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3047,7 +3118,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {}, status: "error", error: "Device 'bulb_not_existing' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3067,7 +3138,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {from: "bulb", to: "bulb_new_name", homeassistant_rename: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3078,7 +3149,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {}, status: "error", error: `Friendly name cannot end with a "/DIGIT" ('bulb_new_name/1')`}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3089,7 +3160,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/rename",
             stringify({data: {}, status: "error", error: "No device has joined since start"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3102,15 +3173,14 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {id: "bulb"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
 
         // The following indicates that devices have published.
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
     });
 
     it("Should allow interviewing a device by ieeeAddr", async () => {
-        // @ts-expect-error private
         const device = controller.zigbee.resolveEntity(devices.bulb)!;
         assert("resolveDefinition" in device);
         device.resolveDefinition = vi.fn();
@@ -3124,11 +3194,11 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {id: "0x000b57fffec6a5b2"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
 
         // The following indicates that devices have published.
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
     });
 
     it("Should throw error on invalid device interview payload", async () => {
@@ -3138,7 +3208,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3149,7 +3219,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {}, status: "error", error: "Device 'bulb_not_existing' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3160,7 +3230,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {}, status: "error", error: "Device 'bulb/1' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3171,7 +3241,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {}, status: "error", error: "Device 'group_1' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3184,7 +3254,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/interview",
             stringify({data: {}, status: "error", error: "interview of 'bulb' (0x000b57fffec6a5b2) failed: Error: something went wrong"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3195,7 +3265,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/generate_external_definition",
             stringify({data: {}, error: "Invalid payload", status: "error"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3206,7 +3276,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/generate_external_definition",
             stringify({data: {}, error: "Device 'non_existing_device' does not exist", status: "error"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3233,7 +3303,7 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3265,7 +3335,7 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3297,7 +3367,7 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3330,7 +3400,7 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3362,7 +3432,7 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3375,7 +3445,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/options",
             stringify({data: {from: {retain: false}, to: {retain: true, transition: 1}, restart_required: false, id: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3396,7 +3466,7 @@ describe("Extension: Bridge", () => {
                 data: {from: {retain: false}, to: {retain: false, off_state: "all_members_off"}, restart_required: true, id: "group_1"},
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3407,7 +3477,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/options",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3420,7 +3490,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/add",
             stringify({data: {friendly_name: "group_193", id: 3}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3433,7 +3503,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/add",
             stringify({data: {friendly_name: "group_193", id: 92}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3444,7 +3514,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/add",
             stringify({data: {}, status: "error", error: "friendly_name must be at least 1 char long"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3455,7 +3525,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/add",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3469,7 +3539,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/touchlink/factory_reset",
             stringify({data: {}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3484,7 +3554,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/touchlink/factory_reset",
             stringify({data: {ieee_address: "0x1239", channel: 12}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3500,7 +3570,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/install_code/add",
             stringify({data: {value: "my-code"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
 
         // By string
@@ -3512,7 +3582,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/install_code/add",
             stringify({data: {value: "my-code"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3525,7 +3595,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/install_code/add",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3539,7 +3609,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/touchlink/identify",
             stringify({data: {ieee_address: "0x1239", channel: 12}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3552,7 +3622,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/touchlink/identify",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3566,7 +3636,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/touchlink/factory_reset",
             stringify({data: {}, status: "error", error: "Failed to factory reset device through Touchlink"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3591,7 +3661,7 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3636,9 +3706,9 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
     });
 
     it("Should allow to configure reporting with endpoint as string", async () => {
@@ -3682,9 +3752,9 @@ describe("Extension: Bridge", () => {
                 },
                 status: "ok",
             }),
-            {retain: false, qos: 0},
+            {},
         );
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
     });
 
     it("Should throw error when configure reporting is called with malformed payload", async () => {
@@ -3709,7 +3779,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/configure_reporting",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3735,7 +3805,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/configure_reporting",
             stringify({data: {}, status: "error", error: "Device 'non_existing_device' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3761,7 +3831,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/configure_reporting",
             stringify({data: {}, status: "error", error: "Device '0x000b57fffec6a5b2' does not have endpoint 'non_existing_endpoint'"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3772,6 +3842,11 @@ describe("Extension: Bridge", () => {
         fs.writeFileSync(path.join(data.mockDir, "log", "log.log"), "test123");
         fs.mkdirSync(path.join(data.mockDir, "ext_converters", "123"));
         fs.writeFileSync(path.join(data.mockDir, "ext_converters", "123", "myfile.js"), "test123");
+        fs.symlinkSync(
+            path.join(data.mockDir, "ext_converters"),
+            path.join(data.mockDir, "ext_converters_sym"),
+            platform() === "win32" ? "junction" : "dir",
+        );
         mockMQTTPublishAsync.mockClear();
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/backup", "");
         await flushPromises();
@@ -3786,7 +3861,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/backup",
             stringify({data: {zip: "THISISBASE64"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3796,21 +3871,18 @@ describe("Extension: Bridge", () => {
         await flushPromises();
         vi.runOnlyPendingTimers();
         expect(mockRestart).toHaveBeenCalledTimes(1);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/restart", stringify({data: {}, status: "ok"}), {
-            retain: false,
-            qos: 0,
-        });
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/restart", stringify({data: {}, status: "ok"}), {});
     });
 
     it("Change options and apply - homeassistant", async () => {
         expect(controller.getExtension("HomeAssistant")).toBeUndefined();
         await mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {homeassistant: {enabled: true}}}));
         await expect(vi.waitUntil(() => controller.getExtension("HomeAssistant"))).resolves.toBeDefined();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
         // revert
         await mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {homeassistant: {enabled: false}}}));
@@ -3823,11 +3895,11 @@ describe("Extension: Bridge", () => {
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {advanced: {log_level: "debug"}}}));
         await flushPromises();
         expect(mockLogger.getLevel()).toStrictEqual("debug");
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3837,11 +3909,11 @@ describe("Extension: Bridge", () => {
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {advanced: {log_debug_namespace_ignore: nsIgnore}}}));
         await flushPromises();
         expect(mockLogger.getDebugNamespaceIgnore()).toStrictEqual(nsIgnore);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3856,11 +3928,11 @@ describe("Extension: Bridge", () => {
         await flushPromises();
         expect(settings.get().advanced.log_namespaced_levels).toStrictEqual({"z2m:mqtt": "warning"});
         expect(mockLogger.getNamespacedLevels()).toStrictEqual({"z2m:mqtt": "warning"});
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: false}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
 
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {advanced: {log_namespaced_levels: {"z2m:mqtt": null}}}}));
@@ -3878,7 +3950,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3894,7 +3966,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3907,7 +3979,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {restart_required: true}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3918,7 +3990,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {}, error: "Invalid payload", status: "error"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -3929,11 +4001,11 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/options",
             stringify({data: {}, error: "advanced/log_level must be string", status: "error"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
-    it("Icon link handling", async () => {
+    it("Icon link handling", () => {
         const bridge = controller.getExtension("Bridge")! as Bridge;
         expect(bridge).toBeDefined();
 
@@ -3964,14 +4036,14 @@ describe("Extension: Bridge", () => {
         expect(payload.icon).not.toBeUndefined();
         expect(payload.icon).toBe(svg_icon);
 
-        definition.icon = "_${model}_";
+        definition.icon = "_$model_";
         // @ts-expect-error bare minimum mock
         payload = bridge.getDefinitionPayload({...device, zh: device, definition, exposes: () => definition.exposes, options: {}});
         assert(payload);
         expect(payload.icon).not.toBeUndefined();
         expect(payload.icon).toBe("_lumi.plug_");
 
-        definition.icon = "_${model}_${zigbeeModel}_";
+        definition.icon = "_$model_$zigbeeModel_";
         // @ts-expect-error bare minimum mock
         payload = bridge.getDefinitionPayload({...device, zh: device, definition, exposes: () => definition.exposes, options: {}});
         assert(payload);
@@ -3987,7 +4059,7 @@ describe("Extension: Bridge", () => {
 
         device.modelID = "?._Z\\NC+Z02*LM";
         definition.model = "&&&&*+";
-        definition.icon = "_${model}_${zigbeeModel}_";
+        definition.icon = "_$model_$zigbeeModel_";
         // @ts-expect-error bare minimum mock
         payload = bridge.getDefinitionPayload({...device, zh: device, definition, exposes: () => definition.exposes, options: {}});
         assert(payload);
@@ -4002,16 +4074,15 @@ describe("Extension: Bridge", () => {
 
         // console.log(mockMQTT.publish.mock.calls);
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(5);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/definitions", expect.stringContaining(stringify(CUSTOM_CLUSTERS)), {
             retain: true,
-            qos: 0,
         });
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({data: {friendly_name: "0x000b57fffec6a5c2", ieee_address: "0x000b57fffec6a5c2"}, type: "device_joined"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -4027,15 +4098,11 @@ describe("Extension: Bridge", () => {
 
         // console.log(mockMQTT.publish.mock.calls);
         expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(4);
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true, qos: 0});
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true, qos: 0});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.any(String), {retain: true});
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/definitions", expect.stringContaining(stringify(CUSTOM_CLUSTERS)), {
             retain: true,
-            qos: 0,
         });
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/device/configure", expect.any(String), {
-            retain: false,
-            qos: 0,
-        });
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/response/device/configure", expect.any(String), {});
     });
 });

@@ -1,3 +1,5 @@
+// biome-ignore assist/source/organizeImports: import mocks first
+import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from "vitest";
 import * as data from "../mocks/data";
 import {mockLogger} from "../mocks/logger";
 import {events as mockMQTTEvents, mockMQTTPublishAsync} from "../mocks/mqtt";
@@ -5,9 +7,7 @@ import {flushPromises} from "../mocks/utils";
 import {devices, groups, events as mockZHEvents, resetGroupMembers, returnDevices} from "../mocks/zigbeeHerdsman";
 
 import stringify from "json-stable-stringify-without-jsonify";
-
 import * as zhcGlobalStore from "zigbee-herdsman-converters/lib/store";
-
 import {Controller} from "../../lib/controller";
 import * as settings from "../../lib/util/settings";
 
@@ -45,7 +45,6 @@ describe("Extension: Groups", () => {
         mockMQTTPublishAsync.mockClear();
         groups.gledopto_group.command.mockClear();
         zhcGlobalStore.clear();
-        // @ts-expect-error private
         controller.state.clear();
     });
 
@@ -460,7 +459,6 @@ describe("Extension: Groups", () => {
         await mockMQTTEvents.message("zigbee2mqtt/group_1/set", stringify({state: "ON"}));
         await flushPromises();
         mockMQTTPublishAsync.mockClear();
-        // @ts-expect-error private
         controller.state.clear();
 
         await mockMQTTEvents.message("zigbee2mqtt/bulb_color/set", stringify({state: "OFF"}));
@@ -487,7 +485,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {device: "bulb_color", endpoint: "default", group: "group_1"}, transaction: "123", status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -507,8 +505,8 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).not.toHaveBeenCalledWith("zigbee2mqtt/bridge/groups", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
-            stringify({data: {}, status: "error", error: "Failed to add from group (timeout)"}),
-            {retain: false, qos: 0},
+            stringify({data: {}, status: "error", error: "Failed to add to group (timeout)"}),
+            {},
         );
     });
 
@@ -526,7 +524,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {device: "bulb_color", endpoint: "default", group: "group/with/slashes"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -546,7 +544,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {device: "wall_switch_double", endpoint: "right", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -571,7 +569,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {device: "wall_switch_double", endpoint: "right", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -588,7 +586,27 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove",
             stringify({data: {device: "bulb_color", endpoint: "default", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
+        );
+    });
+
+    it("Remove from group via MQTT fails", async () => {
+        const device = devices.bulb_color;
+        const endpoint = device.getEndpoint(1)!;
+        const group = groups.group_1;
+        group.members.push(endpoint);
+        endpoint.removeFromGroup.mockImplementationOnce(() => {
+            throw new Error("timeout");
+        });
+        mockMQTTPublishAsync.mockClear();
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/group/members/remove", stringify({group: "group_1", device: "bulb_color"}));
+        await flushPromises();
+        expect(group.members.length).toStrictEqual(1);
+        expect(mockMQTTPublishAsync).not.toHaveBeenCalledWith("zigbee2mqtt/bridge/groups", expect.any(String), expect.any(Object));
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/group/members/remove",
+            stringify({data: {}, status: "error", error: "Failed to remove from group (timeout)"}),
+            {},
         );
     });
 
@@ -608,7 +626,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove",
             stringify({data: {device: "bulb_color", endpoint: "default", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -628,7 +646,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove",
             stringify({data: {device: "0x0017880104e45542", endpoint: "3", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -648,7 +666,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove",
             stringify({data: {device: "wall_switch_double", endpoint: "3", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -668,7 +686,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove",
             stringify({data: {device: "0x0017880104e45542", endpoint: "right", group: "group_1"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -683,7 +701,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove_all",
             stringify({data: {device: "0x0017880104e45542", endpoint: "right"}, status: "ok"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -696,7 +714,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/remove",
             stringify({data: {}, status: "error", error: "Group 'group_1_not_existing' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -709,7 +727,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {}, status: "error", error: "Device 'bulb_color_not_existing' does not exist"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -725,7 +743,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {}, status: "error", error: "Device 'bulb_color' does not have endpoint 'not_existing_endpoint'"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -738,7 +756,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 
@@ -751,7 +769,7 @@ describe("Extension: Groups", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/group/members/add",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
-            {retain: false, qos: 0},
+            {},
         );
     });
 

@@ -1,30 +1,26 @@
-import type {IClientPublishOptions} from "mqtt";
-
-import type Extension from "./extension/extension";
-import type {Zigbee2MQTTAPI} from "./types/api";
-
 import bind from "bind-decorator";
 import stringify from "json-stable-stringify-without-jsonify";
-
 import {setLogger as zhSetLogger} from "zigbee-herdsman";
 import {setLogger as zhcSetLogger} from "zigbee-herdsman-converters";
-
 import EventBus from "./eventBus";
 // Extensions
 import ExtensionAvailability from "./extension/availability";
 import ExtensionBind from "./extension/bind";
 import ExtensionBridge from "./extension/bridge";
 import ExtensionConfigure from "./extension/configure";
+import type Extension from "./extension/extension";
 import ExtensionExternalConverters from "./extension/externalConverters";
 import ExtensionExternalExtensions from "./extension/externalExtensions";
 import ExtensionGroups from "./extension/groups";
+import ExtensionHealth from "./extension/health";
 import ExtensionNetworkMap from "./extension/networkMap";
 import ExtensionOnEvent from "./extension/onEvent";
 import ExtensionOTAUpdate from "./extension/otaUpdate";
 import ExtensionPublish from "./extension/publish";
 import ExtensionReceive from "./extension/receive";
-import Mqtt from "./mqtt";
+import Mqtt, {type MqttPublishOptions} from "./mqtt";
 import State from "./state";
+import type {Zigbee2MQTTAPI} from "./types/api";
 import logger from "./util/logger";
 import {initSdNotify} from "./util/sd-notify";
 import * as settings from "./util/settings";
@@ -32,10 +28,10 @@ import utils from "./util/utils";
 import Zigbee from "./zigbee";
 
 export class Controller {
-    private eventBus: EventBus;
-    private zigbee: Zigbee;
-    private state: State;
-    private mqtt: Mqtt;
+    public readonly eventBus: EventBus;
+    public readonly zigbee: Zigbee;
+    public readonly state: State;
+    public readonly mqtt: Mqtt;
     private restartCallback: () => Promise<void>;
     private exitCallback: (code: number, restart: boolean) => Promise<void>;
     public readonly extensions: Set<Extension>;
@@ -78,6 +74,7 @@ export class Controller {
             new ExtensionOTAUpdate(...this.extensionArgs),
             new ExtensionExternalExtensions(...this.extensionArgs),
             new ExtensionAvailability(...this.extensionArgs),
+            new ExtensionHealth(...this.extensionArgs),
         ]);
     }
 
@@ -165,6 +162,8 @@ export class Controller {
         logger.info("Zigbee2MQTT started!");
 
         this.sdNotify = await initSdNotify();
+
+        settings.setOnboarding(false);
     }
 
     @bind async enableDisableExtension(enable: boolean, name: string): Promise<void> {
@@ -282,17 +281,16 @@ export class Controller {
         }
     }
 
-    async stop(restart = false): Promise<void> {
+    async stop(restart = false, code = 0): Promise<void> {
         this.sdNotify?.notifyStopping();
 
-        let code = 0;
-
+        let localCode = 0;
         for (const extension of this.extensions) {
             try {
                 await extension.stop();
             } catch (error) {
                 logger.error(`Failed to stop '${extension.constructor.name}' (${(error as Error).stack})`);
-                code = 1;
+                localCode = 1;
             }
         }
 
@@ -307,11 +305,11 @@ export class Controller {
             logger.info("Stopped Zigbee2MQTT");
         } catch (error) {
             logger.error(`Failed to stop Zigbee2MQTT (${(error as Error).stack})`);
-            code = 1;
+            localCode = 1;
         }
 
         this.sdNotify?.stop();
-        return await this.exit(code, restart);
+        return await this.exit(code !== 0 ? code : localCode, restart);
     }
 
     async exit(code: number, restart = false): Promise<void> {
@@ -321,7 +319,7 @@ export class Controller {
 
     @bind async onZigbeeAdapterDisconnected(): Promise<void> {
         logger.error("Adapter disconnected, stopping");
-        await this.stop();
+        await this.stop(false, 2);
     }
 
     @bind async publishEntityState(entity: Group | Device, payload: KeyValue, stateChangeReason?: StateChangeReason): Promise<void> {
@@ -335,14 +333,19 @@ export class Controller {
             message = newState;
         }
 
-        const options: IClientPublishOptions = {
-            retain: utils.getObjectProperty(entity.options, "retain", false),
-            qos: utils.getObjectProperty(entity.options, "qos", 0),
+        const options: MakePartialExcept<MqttPublishOptions, "clientOptions" | "meta"> = {
+            clientOptions: {
+                retain: utils.getObjectProperty(entity.options, "retain", false),
+                qos: utils.getObjectProperty(entity.options, "qos", 0),
+            },
+            meta: {
+                isEntityState: true,
+            },
         };
         const retention = utils.getObjectProperty<number | false>(entity.options, "retention", false);
 
         if (retention !== false) {
-            options.properties = {messageExpiryInterval: retention};
+            options.clientOptions.properties = {messageExpiryInterval: retention};
         }
 
         if (entity.isDevice() && settings.get().mqtt.include_device_information) {
@@ -399,7 +402,7 @@ export class Controller {
         this.eventBus.emitPublishEntityState({entity, message, stateChangeReason, payload});
     }
 
-    async iteratePayloadAttributeOutput(topicRoot: string, payload: KeyValue, options: IClientPublishOptions): Promise<void> {
+    async iteratePayloadAttributeOutput(topicRoot: string, payload: KeyValue, options: Partial<MqttPublishOptions>): Promise<void> {
         for (const [key, value] of Object.entries(payload)) {
             let subPayload = value;
             let message = null;
